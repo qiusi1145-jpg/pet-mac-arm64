@@ -1,0 +1,19 @@
+{
+  "name": "deskpet",
+  "productName": "桌宠",
+  "version": "1.0.0",
+  "description": "A Windows desktop pet: upload a PNG, pet it, feed it, throw it around, snap it to windows.",
+  "private": true,
+  "main": "src/main/main.js",
+  "scripts": {
+    "start": "electron .",
+    "test": "node test/fixtures/gen.js && node --test test/unit/*.test.js",
+    "test:smoke": "node test/smoke/smoke.js",
+    "test:ui": "node test/ui/ui.test.js",
+    "gen:fixtures": "node test/fixtures/gen.js"
+  },
+  "license": "UNLICENSED",
+  "devDependencies": {
+    "electron": "^37.0.0"
+  }
+}

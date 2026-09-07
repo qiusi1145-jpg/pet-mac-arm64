@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta
+    http-equiv="Content-Security-Policy"
+    content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob: data:; font-src 'self' data:; connect-src 'self'"
+  />
+  <title>桌宠</title>
+  <style>
+    :root {
+      --pillBg: rgba(30,30,30,.55);
+      --pillText: rgba(255,255,255,.92);
+      --ringColor: #4aa3ff;
+    }
+    html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden;
+      background: transparent; user-select: none; -webkit-user-select: none; }
+    #world { position: absolute; inset: 0; overflow: hidden; background: transparent;
+      pointer-events: none; }
+    /* 背景层：尺寸/位置由渲染层 layoutBg() 逐帧设置 —— 贴活动区域地面、跟随人物居中。
+       不再是铺满全窗：人物移动时背景保持“人物站在图底边正中”。 */
+    #bg { position: absolute; left: 0; top: 0; width: 0; height: 0; object-fit: contain;
+      opacity: 0; pointer-events: none; z-index: 0; }
+    /* 宠物层 */
+    #petWrap { position: absolute; left: 0; top: 0; z-index: 2; pointer-events: none;
+      will-change: transform; }
+    #petWrap canvas { display: block; }
+    /* 特效/爱心层 */
+    #fx { position: absolute; inset: 0; z-index: 3; pointer-events: none; overflow: visible; }
+    /* 交互 UI 层（状态胶囊 / 菜单 / 弹层） */
+    #ui { position: absolute; inset: 0; z-index: 5; pointer-events: none; }
+    #ui > .interactive { pointer-events: auto; }
+
+    /* 占位提示（尚无宠物时） */
+    #hint { position: absolute; left: 12px; bottom: 12px; color: rgba(0,0,0,.55);
+      font: 13px/1.6 "Microsoft YaHei", sans-serif; background: rgba(255,255,255,.65);
+      padding: 4px 10px; border-radius: 10px; display: none; }
+
+    /* 长按进度环 */
+    #ringWrap { position: absolute; width: 0; height: 0; z-index: 6; display: none;
+      pointer-events: none; }
+    #ringWrap svg { position: absolute; left: -34px; top: -34px; transform: rotate(-90deg); }
+
+    /* 爱心 */
+    .heart { position: absolute; font-weight: 700; z-index: 4; pointer-events: none;
+      animation: floatUp var(--dur, 1.4s) ease-out forwards; }
+    @keyframes floatUp { 0% { transform: translate(0,0) scale(.6); opacity: 0; }
+      15% { opacity: 1; } 100% { transform: translate(var(--dx, 8px), -90px) scale(1.15); opacity: 0; } }
+
+    /* 状态胶囊 */
+    #pill { position: absolute; top: 8px; left: 8px; z-index: 6;
+      font: 12px/20px "Microsoft YaHei", sans-serif; color: var(--pillText);
+      background: var(--pillBg); border-radius: 12px; padding: 2px 12px; cursor: pointer;
+      white-space: nowrap; }
+    #pill .dot { display: none; }
+    #pill.collapsed { padding: 2px 9px; }
+    #pill.collapsed .txt { display: none; }
+    #pill.collapsed .dot { display: inline; }
+    #pill.low { box-shadow: 0 0 0 1px rgba(255,80,80,.8); }
+
+    /* 区域设置面板（Phase 4） */
+    #panel { position: absolute; right: 8px; top: 8px; z-index: 7; display: none;
+      width: 168px; background: rgba(40,40,40,.88); color: #eee; border-radius: 10px;
+      padding: 8px 10px 10px; font: 12px/1.5 "Microsoft YaHei", sans-serif; }
+    #panel .pt { font-weight: 700; margin-bottom: 4px; color: #fff; }
+    #panel .row { display: flex; gap: 6px; margin: 5px 0; }
+    #panel button { flex: 1; font: 12px/1.6 "Microsoft YaHei", sans-serif;
+      color: #222; background: #f2f2f2; border: 1px solid #bbb; border-radius: 6px;
+      padding: 2px 4px; cursor: pointer; }
+    #panel button:hover { background: #e5f1fb; }
+    #panel .close { flex: 1; margin-top: 6px; }
+
+    /* 换宠/背景 应用内图片选择器（不弹系统文件对话框） */
+    #petPicker { position: absolute; right: 16px; top: 40px; bottom: 16px; z-index: 8;
+      width: 344px; display: none; flex-direction: column;
+      background: rgba(42,42,42,.95); color: #eee; border-radius: 12px;
+      padding: 8px 10px 10px; font: 12px/1.5 "Microsoft YaHei", sans-serif;
+      box-shadow: 0 6px 24px rgba(0,0,0,.35); }
+    #petPicker .pk-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+    #petPicker .pk-title { font-weight: 700; color: #fff; }
+    #petPicker .pk-hint { color: #bbb; font-weight: 400; font-size: 11px; }
+    #petPicker button { font: 12px/1.6 "Microsoft YaHei"; color: #222; background: #eaeaea;
+      border: 1px solid #999; border-radius: 7px; padding: 3px 8px; cursor: pointer; }
+    #petPicker button:hover { background: #cfe6fb; }
+    #petPicker button.primary { background: #2f9bff; color: #fff; border-color: #1b7fdd; font-weight: 700; }
+    #petPicker button.primary:hover { background: #1f8aef; }
+    #petPicker button.primary:disabled { background: #8fbbe6; cursor: default; }
+    #petPicker .pk-close { margin-left: auto; width: auto; flex: 0 0 auto; font-weight: 700; }
+    #petPicker .pk-folders { display: flex; flex-wrap: wrap; gap: 5px; margin: 4px 0 6px; }
+    #petPicker .pk-folders .pk-chip { background: #3a4a5a; color: #e6f1fb; border-color: #2c3946; }
+    #petPicker .pk-folders .pk-chip:hover { background: #4a5f73; }
+    #petPicker .pk-path { display: flex; gap: 6px; margin: 6px 0; }
+    #petPicker .pk-path input { flex: 1 1 auto; min-width: 0; font: 12px/1.4 "Microsoft YaHei",
+      padding: 2px 6px; border-radius: 7px; border: 1px solid #666; background: #222; color: #eee; }
+    #petPicker .pk-path button { flex: 0 0 auto; }
+    #petPicker .pk-list { flex: 1 1 auto; min-height: 70px; overflow: auto; border: 1px solid #555;
+      border-radius: 8px; background: rgba(0,0,0,.24); padding: 4px; }
+    #petPicker .pk-item { padding: 3px 8px; border-radius: 6px; cursor: pointer;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: #ddd; }
+    #petPicker .pk-item:hover { background: rgba(255,255,255,.12); }
+    #petPicker .pk-item.sel { background: #2f9bff; color: #fff; }
+    #petPicker .pk-empty { color: #aaa; text-align: center; padding: 14px 6px; }
+    #petPicker .pk-preview { flex: 0 0 148px; margin-top: 6px; border: 1px solid #555; border-radius: 8px;
+      background: rgba(0,0,0,.24); display: flex; align-items: center; justify-content: center;
+      overflow: hidden; }
+    #petPicker .pk-preview img { max-width: 100%; max-height: 100%; object-fit: contain; }
+    #petPicker .pk-prevmsg { color: #bbb; font-size: 11px; padding: 6px; text-align: center; }
+    #petPicker .pk-err { color: #ffb0a0; min-height: 15px; margin: 4px 0 2px; font-size: 11px; }
+    #petPicker .pk-foot { display: flex; gap: 6px; align-items: center; }
+    #petPicker .pk-foot button { flex: 1; }
+  </style>
+</head>
+<body>
+  <div id="world">
+    <img id="bg" alt="" draggable="false" />
+    <div id="petWrap"><canvas id="pet"></canvas></div>
+    <div id="fx"></div>
+    <div id="ui">
+      <div id="pill" class="interactive" title="点击折叠/展开状态"><span class="dot">●</span><span class="txt"></span></div>
+      <div id="panel" class="interactive">
+        <div class="pt">活动区域 <span id="panelDims"></span></div>
+        <div class="row"><button data-k="w-" title="变窄">⇤ 变窄</button><button data-k="w+" title="变宽">变宽 ⇥</button></div>
+        <div class="row"><button data-k="h-" title="变矮">⇩ 变矮</button><button data-k="h+" title="变高">变高 ⇧</button></div>
+        <button data-k="reset" style="flex:1">还原为整个工作区</button>
+        <div class="row"><button data-k="close" class="close">关闭</button></div>
+      </div>
+      <div id="petPicker" class="interactive">
+        <div class="pk-head">
+          <span class="pk-title" id="pkTitle">更换宠物</span>
+          <span class="pk-hint" id="pkHint"></span>
+          <button class="pk-close" data-pk="close" title="关闭 (Esc)">✕</button>
+        </div>
+        <div class="pk-folders" id="pkFolders"></div>
+        <div class="pk-path">
+          <input id="pkPathInput" spellcheck="false" title="文件夹路径" />
+          <button data-pk="go">打开</button>
+          <button data-pk="up">上级 ↑</button>
+        </div>
+        <div class="pk-list" id="pkList"></div>
+        <div class="pk-preview" id="pkPreview"><div class="pk-prevmsg" id="pkPrevMsg">在列表里点一张图片预览</div></div>
+        <div class="pk-err" id="pkErr"></div>
+        <div class="pk-foot">
+          <button data-pk="refresh">刷新</button>
+          <button id="pkUse" data-pk="use" class="primary">把这张设为宠物</button>
+        </div>
+      </div>
+    </div>
+    <div id="ringWrap"><svg width="68" height="68"><circle cx="34" cy="34" r="30" fill="none" stroke="rgba(0,0,0,.18)" stroke-width="4"/><circle id="ringArc" cx="34" cy="34" r="30" fill="none" stroke="var(--ringColor)" stroke-width="4" stroke-linecap="round" stroke-dasharray="188.5" stroke-dashoffset="188.5"/></svg></div>
+    <div id="hint">还没有宠物：右键托盘图标 → 更换宠物，上传一张 PNG</div>
+  </div>
+  <script src="./boot.js"></script>
+</body>
+</html>
