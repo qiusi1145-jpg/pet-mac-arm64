@@ -30,6 +30,15 @@ async function waitFor(js, condExpr, timeoutMs, what) {
 }
 
 const scenarios = {
+  /** 启动问候：桌宠启动后应自动弹出一条随机问候气泡。 */
+  async greeting(ctx) {
+    await waitFor(ctx.js, 'window.__petReady && window.__petState().petLoaded', 12000, 'renderer ready + pet');
+    await waitFor(ctx.js, `document.getElementById('bubble').classList.contains('show')`, 3000, '启动问候气泡');
+    const text = await ctx.js(`document.getElementById('bubble').textContent`);
+    const list = await ctx.js(`window.__petState().greetings`);
+    return typeof text === 'string' && text.length > 0 && Array.isArray(list) && list.includes(text);
+  },
+
   /** 动画：摸头产生压缩 q 弹并收敛；胶囊点击折叠/展开。 */
   async anim(ctx) {
     const { js, sleep } = ctx;

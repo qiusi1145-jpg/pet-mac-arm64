@@ -26,6 +26,7 @@ const $ = (id) => document.getElementById(id);
 const worldEl = $('world'), petWrap = $('petWrap'), petCanvas = $('pet');
 const fxEl = $('fx'), ringWrap = $('ringWrap'), ringArc = $('ringArc');
 const pillEl = $('pill');
+const bubbleEl = $('bubble');
 const bgEl = $('bg'), regionPanel = $('panel'), panelDims = $('panelDims');
 const hintEl = $('hint');
 const petPickerEl = $('petPicker');
@@ -103,6 +104,7 @@ const app = {
   regionPanelOpen: false,
   // 应用内图片选择器（更换宠物 / 选背景，绕开这台机器上失灵的原生文件对话框）
   petPickerOpen: false,
+  bubbleTimer: null,
   petPickerKind: 'pet',   // 'pet' | 'bg'
   petPickerDir: null,
   petPickerCur: null,     // 当前选中的源文件路径
@@ -257,6 +259,23 @@ function spawnHeart(cx, cy, level = 1) {
   h.textContent = CFG.ui.heartGlyph;
   fxEl.appendChild(h);
   h.addEventListener('animationend', () => h.remove());
+}
+
+function showBubble(text, durationMs) {
+  if (!bubbleEl || !app.pet) return;
+  bubbleEl.textContent = String(text || '');
+  bubbleEl.classList.add('show');
+  const p = app.pet;
+  bubbleEl.style.left = `${clamp(p.pos.x + p.anchor.x - bubbleEl.offsetWidth / 2, 6, Math.max(6, app.worldW - bubbleEl.offsetWidth - 6))}px`;
+  bubbleEl.style.top = `${clamp(p.pos.y - bubbleEl.offsetHeight - 8, 6, Math.max(6, app.worldH - bubbleEl.offsetHeight - 6))}px`;
+  if (app.bubbleTimer) clearTimeout(app.bubbleTimer);
+  app.bubbleTimer = setTimeout(hideBubble, Math.max(0, durationMs ?? CFG.greeting.durationMs));
+}
+
+function hideBubble() {
+  if (!bubbleEl) return;
+  bubbleEl.classList.remove('show');
+  if (app.bubbleTimer) { clearTimeout(app.bubbleTimer); app.bubbleTimer = null; }
 }
 
 function updateRing(dt) {
@@ -1249,6 +1268,8 @@ function testState() {
     // Phase 4
     status: app.status ? { ...app.status } : null,
     derived: v,
+    greetings: CFG.greeting.greetings || [],
+    bubbleVisible: !!(bubbleEl && bubbleEl.classList.contains('show')),
     pillText: pillEl.querySelector('.txt').textContent,
     petOpacity: p ? petCanvas.style.opacity : null,
     bgOn: !!app.bgOn,
@@ -1303,6 +1324,10 @@ async function init() {
   app.ready = true;
   window.__petReady = true;
   window.__pet = app;
+  setTimeout(() => {
+    const list = CFG.greeting.greetings || [];
+    if (list.length) showBubble(list[Math.floor(Math.random() * list.length)], CFG.greeting.durationMs);
+  }, CFG.greeting.delayMs);
   if (app.testMode) {
     window.__petState = () => testState();
     window.__petTest = {
@@ -1315,6 +1340,8 @@ async function init() {
       feed() { pulseFeed(); },
       toggleLock() { toggleLock(); },
       heart(level = 1) { const p = app.pet; if (p) spawnHeart(p.pos.x + p.anchor.x, p.pos.y + 10, level); },
+      showBubble: (text, ms) => showBubble(text, ms),
+      hideBubble: () => hideBubble(),
       forcePhys(vx, vy) { startPhys({ vx, vy }); },
       animState() { return { sx: app.anim.spr.x.s, sy: app.anim.spr.y.s, ring: app.anim.ringVisible }; },
       drag(dx, dy) { if (app.pet) { app.pet.pos.x += dx; app.pet.pos.y += dy; clampPetIntoWorld(app.pet); syncPlacement(); } },
