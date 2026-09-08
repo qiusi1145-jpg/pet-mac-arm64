@@ -453,6 +453,7 @@ class PetApp {
           { label: '不透明度 100%', type: 'radio', checked: bgOpacityPct === 100, click: () => self.send('bg:opacity', { opacity: 1 }) },
         ],
       },
+      { label: '切换状态', click: () => self.send('state:toggle') },
       { label: '重置状态', click: () => self.act('resetStatus') },
       { type: 'separator' },
       { label: '退出', click: () => self.quit() },

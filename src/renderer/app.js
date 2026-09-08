@@ -20,6 +20,7 @@ const { springParams, integrateSpring, impulse, breathe } = require('../shared/s
 const physics = require('../shared/physics');
 const { chooseSnapTarget, shouldDetach } = require('../shared/snap');
 const { planBlink } = require('../shared/blink');
+const { nextStateVisual } = require('../shared/stateVisual');
 const statusM = require('../shared/status');
 const { clamp } = require('../shared/util');
 
@@ -29,6 +30,7 @@ const fxEl = $('fx'), ringWrap = $('ringWrap'), ringArc = $('ringArc');
 const pillEl = $('pill');
 const bubbleEl = $('bubble');
 const blinkEl = $('blink');
+const stateEl = $('state');
 const bgEl = $('bg'), regionPanel = $('panel'), panelDims = $('panelDims');
 const hintEl = $('hint');
 const petPickerEl = $('petPicker');
@@ -108,6 +110,7 @@ const app = {
   petPickerOpen: false,
   bubbleTimer: null,
   blink: { visible: false, timer: null, endTimer: null },
+  stateVisual: { visible: false },
   petPickerKind: 'pet',   // 'pet' | 'bg'
   petPickerDir: null,
   petPickerCur: null,     // 当前选中的源文件路径
@@ -215,6 +218,7 @@ async function loadPet(dataUrl) {
   petWrap.style.width = p.w + 'px';
   petWrap.style.height = p.h + 'px';
   blinkEl.src = '../assets/blink.png';
+  stateEl.src = '../assets/state.png';
   petCanvas.style.transformOrigin = `${p.anchor.x}px ${p.anchor.y}px`;
   petCanvas.style.transform = '';
   hintEl.style.display = 'none';
@@ -285,6 +289,16 @@ function hideBubble() {
 function setBlinkVisible(v) {
   app.blink.visible = !!v;
   if (blinkEl) blinkEl.style.display = app.blink.visible ? 'block' : 'none';
+}
+
+function setStateVisible(v) {
+  app.stateVisual.visible = !!v;
+  if (stateEl) stateEl.style.display = app.stateVisual.visible ? 'block' : 'none';
+}
+
+function toggleStateVisual() {
+  setStateVisible(nextStateVisual(app.stateVisual.visible));
+  return app.stateVisual.visible;
 }
 
 function scheduleBlink() {
@@ -608,6 +622,7 @@ function bindIpc() {
   ipcRenderer.on('region:changed', (_e, { regionScreen }) => applyRegion(regionScreen));
   ipcRenderer.on('ui:openRegionEditor', () => openRegionEditor());
   ipcRenderer.on('ui:openPicker', (_e, { kind }) => openPetPicker(kind));
+  ipcRenderer.on('state:toggle', () => toggleStateVisual());
   // 原生右键菜单关闭后：清掉可能残留的按键/手势态（修复“菜单选完人物被吸到鼠标”）
   ipcRenderer.on('menu:closed', () => cleanupMenuGesture());
   // 吸附开关同步（托盘）
@@ -1292,6 +1307,7 @@ function testState() {
     derived: v,
     greetings: CFG.greeting.greetings || [],
     bubbleVisible: !!(bubbleEl && bubbleEl.classList.contains('show')),
+    stateVisualVisible: app.stateVisual.visible,
     pillText: pillEl.querySelector('.txt').textContent,
     petOpacity: p ? petCanvas.style.opacity : null,
     bgOn: !!app.bgOn,
@@ -1364,6 +1380,7 @@ async function init() {
       toggleLock() { toggleLock(); },
       heart(level = 1) { const p = app.pet; if (p) spawnHeart(p.pos.x + p.anchor.x, p.pos.y + 10, level); },
       forceBlink(visible) { setBlinkVisible(!!visible); },
+      toggleStateVisual: () => toggleStateVisual(),
       showBubble: (text, ms) => showBubble(text, ms),
       hideBubble: () => hideBubble(),
       forcePhys(vx, vy) { startPhys({ vx, vy }); },

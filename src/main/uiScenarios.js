@@ -108,6 +108,40 @@ const scenarios = {
     return r.visible && r.hidden && r.hitWhileVisible === true && r.hitWhileHidden === true;
   },
 
+  /** 状态图：只切换视觉层，不改变点击判定。 */
+  async stateVisual(ctx) {
+    const { js } = ctx;
+    await waitFor(js, 'window.__petReady && window.__petState().petLoaded', 12000, 'renderer ready + pet');
+    const r = await js(`(() => {
+      const T = window.__petTest;
+      const s = T.state();
+      const p = s.pet;
+      let hit = null;
+      outer:
+      for (let dy = -10; dy <= 10; dy++) {
+        for (let dx = -10; dx <= 10; dx++) {
+          const x = p.x + Math.round(p.anchor.x) + dx;
+          const y = p.y + Math.round(p.anchor.y) + dy;
+          if (T.isInteractableAt(x, y)) { hit = { x, y }; break outer; }
+        }
+      }
+      const status0 = T.state().status;
+      const shown = T.toggleStateVisual();
+      const visible = document.getElementById('state').style.display === 'block';
+      const hitWhileVisible = T.isInteractableAt(hit.x, hit.y);
+      const status1 = T.state().status;
+      const hiddenAgain = !T.toggleStateVisual();
+      const hitWhileHidden = T.isInteractableAt(hit.x, hit.y);
+      const status2 = T.state().status;
+      return { shown, visible, hitWhileVisible, status1, hiddenAgain, hitWhileHidden, status2, status0 };
+    })()`);
+    const sameStatus = (a, b) => a && b &&
+      a.mood === b.mood && a.energy === b.energy && a.satiety === b.satiety && a.affinity === b.affinity;
+    return r.shown === true && r.visible === true && r.hitWhileVisible === true &&
+      r.hiddenAgain === true && r.hitWhileHidden === true &&
+      sameStatus(r.status0, r.status1) && sameStatus(r.status0, r.status2);
+  },
+
   /** 抛掷物理：注入速度→宠物真实飞动并最终落地回待机。 */
   async dragPhysics(ctx) {
     const { js, sleep } = ctx;
