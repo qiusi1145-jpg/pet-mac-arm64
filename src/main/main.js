@@ -131,6 +131,9 @@ class PetApp {
         sandbox: false,
         backgroundThrottling: false,
         devTools: false,
+        // 必须关闭：Chromium 的 Windows 拼写检查会在进程 cwd 下不断创建
+        // “<乱码名>/Microsoft/Spelling”垃圾目录（已知上游问题）。
+        spellcheck: false,
       },
     });
     // 屏幕显示时再 show，避免白闪
