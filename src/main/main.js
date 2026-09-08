@@ -60,6 +60,7 @@ class PetApp {
     this.reminderTimer = 0;       // 随机催促定时器
     this.chatWin = null;          // 聊天窗口
     this.chatSettingsWin = null;  // 聊天设置窗口
+    this.stateVisualOn = false;   // 当前形态：false=主宠物图，true=状态图（渲染层回传同步）
   }
 
   async init() {
@@ -280,6 +281,9 @@ class PetApp {
     ipcMain.on('app:setVisible', (_e, v) => {
       if (v) this.showWindow(); else this.hideWindow();
     });
+
+    // 状态图形态（渲染层应用后回传，供“切换状态”菜单单选项的勾选态）
+    ipcMain.on('state:visualSync', (_e, { useState }) => { this.stateVisualOn = !!useState; });
 
     // 窗口枚举（吸附）
     ipcMain.handle('enumerate:windows', () => {
@@ -687,7 +691,14 @@ class PetApp {
           { label: '不透明度 100%', type: 'radio', checked: bgOpacityPct === 100, click: () => self.send('bg:opacity', { opacity: 1 }) },
         ],
       },
-      { label: '切换状态', click: () => self.send('state:toggle') },
+      {
+        label: '切换状态',
+        submenu: [
+          // 两个单选项直达目标形态（勾选态 = 渲染层回传的当前形态）
+          { label: '主宠物图', type: 'radio', checked: !self.stateVisualOn, click: () => self.send('state:visual', { useState: false }) },
+          { label: '状态图', type: 'radio', checked: !!self.stateVisualOn, click: () => self.send('state:visual', { useState: true }) },
+        ],
+      },
       { label: '重置状态', click: () => self.act('resetStatus') },
       { label: '更换宠物…', click: () => self.openPicker('pet') },
       { type: 'separator' },

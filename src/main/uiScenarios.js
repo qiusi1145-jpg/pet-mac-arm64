@@ -118,7 +118,7 @@ const scenarios = {
     return r.visible && r.hidden && r.hitWhileVisible === true && r.hitWhileHidden === true;
   },
 
-  /** 状态图：只切换视觉层，不改变点击判定。 */
+  /** 状态图：两套形态互斥（显示状态图时原图整体隐藏），只切换视觉层，不改变点击判定。 */
   async stateVisual(ctx) {
     const { js } = ctx;
     await waitFor(js, 'window.__petReady && window.__petState().petLoaded', 12000, 'renderer ready + pet');
@@ -138,17 +138,28 @@ const scenarios = {
       const status0 = T.state().status;
       const shown = T.toggleStateVisual();
       const visible = document.getElementById('state').style.display === 'block';
+      const petHidden = T.state().petCanvasHidden;          // 原图层整体隐藏（不是叠加）
+      const blinkSuppressed = (() => {                       // 闭眼图属于主形象 → 状态形态不眨眼
+        T.forceBlink(true);
+        const suppressed = document.getElementById('blink').style.display !== 'block';
+        T.forceBlink(false);
+        return suppressed;
+      })();
       const hitWhileVisible = T.isInteractableAt(hit.x, hit.y);
       const status1 = T.state().status;
       const hiddenAgain = !T.toggleStateVisual();
+      const petBackVisible = document.getElementById('pet').style.display !== 'none';
+      const stateHiddenAgain = document.getElementById('state').style.display === 'none';
       const hitWhileHidden = T.isInteractableAt(hit.x, hit.y);
       const status2 = T.state().status;
-      return { shown, visible, hitWhileVisible, status1, hiddenAgain, hitWhileHidden, status2, status0 };
+      return { shown, visible, petHidden, blinkSuppressed, hitWhileVisible, status1,
+        hiddenAgain, petBackVisible, stateHiddenAgain, hitWhileHidden, status2, status0 };
     })()`);
     const sameStatus = (a, b) => a && b &&
       a.mood === b.mood && a.energy === b.energy && a.satiety === b.satiety && a.affinity === b.affinity;
-    return r.shown === true && r.visible === true && r.hitWhileVisible === true &&
-      r.hiddenAgain === true && r.hitWhileHidden === true &&
+    return r.shown === true && r.visible === true && r.petHidden === true && r.blinkSuppressed === true &&
+      r.hitWhileVisible === true &&
+      r.hiddenAgain === true && r.petBackVisible === true && r.stateHiddenAgain === true && r.hitWhileHidden === true &&
       sameStatus(r.status0, r.status1) && sameStatus(r.status0, r.status2);
   },
 

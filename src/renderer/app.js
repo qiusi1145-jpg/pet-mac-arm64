@@ -290,6 +290,8 @@ function hideBubble() {
 }
 
 function setBlinkVisible(v) {
+  // 眨眼图属于“主宠物形象”：状态图形态下不显示眨眼
+  if (v && app.stateVisual.visible) v = false;
   app.blink.visible = !!v;
   if (blinkEl) blinkEl.style.display = app.blink.visible ? 'block' : 'none';
 }
@@ -297,6 +299,11 @@ function setBlinkVisible(v) {
 function setStateVisible(v) {
   app.stateVisual.visible = !!v;
   if (stateEl) stateEl.style.display = app.stateVisual.visible ? 'block' : 'none';
+  // 两套形态互斥：显示状态图时原图层整体隐藏（不是叠加），切回时恢复
+  if (petCanvas) petCanvas.style.display = app.stateVisual.visible ? 'none' : '';
+  if (app.stateVisual.visible) setBlinkVisible(false);
+  // 回报主进程当前形态（菜单单选项勾选态依据）
+  ipcRenderer.send('state:visualSync', { useState: app.stateVisual.visible });
 }
 
 function toggleStateVisual() {
@@ -308,6 +315,8 @@ function scheduleBlink() {
   if (!app.pet) return;
   const plan = planBlink();
   app.blink.timer = setTimeout(() => {
+    // 状态图形态下不眨眼（闭眼图属于主宠物形象），只推进下一次计划
+    if (app.stateVisual.visible) { scheduleBlink(); return; }
     setBlinkVisible(true);
     app.blink.endTimer = setTimeout(() => {
       setBlinkVisible(false);
@@ -627,7 +636,7 @@ function bindIpc() {
   ipcRenderer.on('region:changed', (_e, { regionScreen }) => applyRegion(regionScreen));
   ipcRenderer.on('ui:openRegionEditor', () => openRegionEditor());
   ipcRenderer.on('ui:openPicker', (_e, { kind }) => openPetPicker(kind));
-  ipcRenderer.on('state:toggle', () => toggleStateVisual());
+  ipcRenderer.on('state:visual', (_e, { useState }) => setStateVisible(!!useState));
   // ---- 气泡类：启动问候之外的待办提醒 / 随机催促 / 聊天回复 ----
   ipcRenderer.on('bubble:todo', (_e, { text, ms }) => showBubble(text, ms));
   ipcRenderer.on('bubble:reminder', (_e, { text, ms }) => showBubble(text, ms));
@@ -715,7 +724,8 @@ function petOpacityNow() {
 
 function applyStatusVisual() {
   if (!app.pet || !app.status) return;
-  petCanvas.style.opacity = petOpacityNow();
+  // 透明度作用于整个宠物容器：主图/状态图两种形态统一生效
+  petWrap.style.opacity = petOpacityNow();
   const v = statusM.deriveStatus(app.status);
   pillEl.classList.toggle('low', v.low);
 }
@@ -741,7 +751,7 @@ function beginRest(durMs, periodMs, minOp, maxOp) {
     max: maxOp,
     opacity: minOp, // 一进入休息从最淡开始渐变
   };
-  if (app.pet) petCanvas.style.opacity = String(minOp);
+  if (app.pet) petWrap.style.opacity = String(minOp);
 }
 
 /** 菜单“休息”→ 用默认时长/周期/上下限开始休息。已在休息中则忽略（不叠加）。 */
@@ -757,7 +767,7 @@ function tickRest() {
   const elapsed = Date.now() - r.start;
   if (elapsed >= r.dur) { finishRest(); return; }
   r.opacity = restWave(r, elapsed);
-  if (app.pet) petCanvas.style.opacity = String(r.opacity);
+  if (app.pet) petWrap.style.opacity = String(r.opacity);
 }
 
 /** 休息结束：停止闪烁；体力回满；透明度恢复正常（状态驱动的值）。 */
@@ -1321,8 +1331,9 @@ function testState() {
     greetings: CFG.greeting.greetings || [],
     bubbleVisible: !!(bubbleEl && bubbleEl.classList.contains('show')),
     stateVisualVisible: app.stateVisual.visible,
+    petCanvasHidden: petCanvas.style.display === 'none',
     pillText: pillEl.querySelector('.txt').textContent,
-    petOpacity: p ? petCanvas.style.opacity : null,
+    petOpacity: p ? petWrap.style.opacity : null,
     bgOn: !!app.bgOn,
     bgPath: app.bgPath || null,
     bgRect: (() => {
@@ -1424,7 +1435,7 @@ async function init() {
       // —— “休息”钩子：restState 观测；restStart 走默认（30s，仅冒烟用）；restShort 用短时长/快周期测闪烁与回满 ——
       restState: () => (app.rest
         ? { active: app.rest.active, start: app.rest.start, dur: app.rest.dur, period: app.rest.period, min: app.rest.min, max: app.rest.max, elapsed: Date.now() - app.rest.start, opacity: app.rest.opacity }
-        : { active: false, opacity: petCanvas.style.opacity }),
+        : { active: false, opacity: petWrap.style.opacity }),
       restStart: () => startRest(),
       restShort(durMs, periodMs, minOp, maxOp) {
         beginRest(durMs, periodMs, minOp == null ? CFG.rest.opacityMin : minOp, maxOp == null ? CFG.rest.opacityMax : maxOp);
