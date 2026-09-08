@@ -18,7 +18,7 @@ const { Store } = require('./store');
 const { WinEnum, isSystemWindow } = require('./winenum');
 
 const PET_NAME = '桌宠';
-const PET_IMG_FILTERS = [{ name: '宠物图片 (PNG / JPG / WebP / GIF / BMP)', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp'] }];
+const PET_IMG_FILTERS = [{ name: '宠物图片 (PNG)', extensions: ['png'] }];
 
 // 供测试隔离：把 userData 指到临时目录，避免污染真实设置。
 if (process.env.PET_USERDATA) app.setPath('userData', process.env.PET_USERDATA);
@@ -34,7 +34,7 @@ log('main module loaded');
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 
 const AUDIO_EXTS = new Set(['.mp3', '.wav', '.ogg', '.flac', '.m4a', '.aac']);
-const IMG_EXTS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp']);
+const IMG_EXTS = new Set(['.png']);
 
 class PetApp {
   constructor() {
@@ -211,7 +211,7 @@ class PetApp {
 
     // 资产导入与读取
     ipcMain.handle('file:pickPet', async () => this.pickFile('宠物图片', PET_IMG_FILTERS));
-    ipcMain.handle('file:pickBg', async () => this.pickFile('背景图片', [{ name: '图片', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp'] }]));
+    ipcMain.handle('file:pickBg', async () => this.pickFile('背景图片', [{ name: '图片', extensions: ['png'] }]));
     ipcMain.handle('file:pickAudio', async () => this.pickFile('音乐文件', [{ name: '音频', extensions: ['mp3', 'wav', 'ogg', 'flac', 'm4a', 'aac'] }], true));
 
     ipcMain.handle('asset:importPet', (_e, srcPath) => this.importPetFile(srcPath));
@@ -393,10 +393,14 @@ class PetApp {
         },
       },
       { type: 'separator' },
-      { label: '主菜单…', click: () => this.popupMainMenu() },
+      {
+        label: '主菜单…',
+        click: () => {
+          this.showIfHidden();
+          if (self.win && !self.win.isDestroyed()) setTimeout(() => self.popupMainMenu(), 80);
+        },
+      },
       { label: '活动区域设置…', click: () => { this.showIfHidden(); if (self.win && !self.win.isDestroyed()) self.win.webContents.send('ui:openRegionEditor'); } },
-      // 更换宠物入口已隐藏（按需求注释，不出现在托盘菜单；openPicker('pet') 代码保留）
-      // { label: '更换宠物…', click: () => this.openPicker('pet') },
       { type: 'separator' },
       { label: '退出', click: () => self.quit() },
     ]);
@@ -450,8 +454,6 @@ class PetApp {
         ],
       },
       { label: '重置状态', click: () => self.act('resetStatus') },
-      // 更换宠物入口已隐藏（按需求注释，不出现在主菜单；openPicker('pet') 代码保留）
-      // { label: '更换宠物…', click: () => self.openPicker('pet') },
       { type: 'separator' },
       { label: '退出', click: () => self.quit() },
     ];

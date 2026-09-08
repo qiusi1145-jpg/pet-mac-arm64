@@ -541,7 +541,9 @@ function applyRegion(regionScreen) {
   app.worldOrigin = { x: regionScreen.x, y: regionScreen.y };
   app.worldW = regionScreen.width;
   app.worldH = regionScreen.height;
+  updateUiRects();
   if (app.pet) { clampPetIntoWorld(app.pet); syncPlacement(); }
+  refreshRegionDims();
 }
 
 /** 更换宠物：导入到 userData/assets 并显示；返回是否成功（供应用内选择器判断）。 */
@@ -1100,8 +1102,8 @@ function openPetPicker(kind, initialDir) {
   pkHint.textContent = isAudio
     ? '（MP3 / WAV / OGG / FLAC / M4A / AAC）'
     : isBg
-      ? '（铺在桌宠后面的图，高度自动按人物缩放）'
-      : '（推荐透明背景的 PNG）';
+      ? '（仅 PNG，铺在桌宠后面的图，高度自动按人物缩放）'
+      : '（仅 PNG，推荐透明背景）';
   pkUse.textContent = isAudio ? '把这首加入播放列表' : isBg ? '把这张设为背景' : '把这张设为宠物';
   app.petPickerOpen = true;
   petPickerEl.style.display = 'flex';
