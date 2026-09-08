@@ -645,6 +645,7 @@ function bindIpc() {
   ipcRenderer.on('pet:action', (_e, a) => {
     if (!a) return;
     if (a.type === 'feed') pulseFeed();
+    else if (a.type === 'headpat') pulseHeadpat(); // 聊天未命中关键词 → 模拟被点击（Q 弹 + 情绪变化）
     else if (a.type === 'resetStatus') resetStatus();
     else if (a.type === 'rest') startRest();
   });

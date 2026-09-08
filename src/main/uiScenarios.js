@@ -314,6 +314,89 @@ const scenarios = {
     return assertMap(results);
   },
 
+  /**
+   * 聊天（功能 7）：真实聊天窗 + 聊天设置窗 —— 添加规则（持久化）→ 发送命中消息 →
+   * 回复渲染在聊天窗 + 主窗气泡同步 → 发送未命中消息 → 主窗 Q 弹（情绪变化）且无回复气泡 →
+   * 最长关键词优先 → 删除规则 → 关闭窗口。
+   */
+  async chat(ctx) {
+    const { js, sleep, execIn, waitForWin, mainState } = ctx;
+    await waitFor(js, 'window.__petReady && window.__petState().petLoaded', 12000, 'renderer ready + pet');
+    const results = [];
+    await js('window.__petTest.setAffinityRng(0.99)'); // 关掉随机爱心，避免干扰断言
+
+    // 打开聊天 + 设置窗口（真实菜单动作路径）
+    ctx.openChat();
+    ctx.openChatSettings();
+    await waitForWin('chatWin');
+    await waitForWin('chatSettingsWin');
+
+    // ① 添加规则：你好 → 嗨，主人！
+    await execIn('chatSettingsWin', `document.getElementById('keyword').value = '你好'`);
+    await execIn('chatSettingsWin', `document.getElementById('reply').value = '嗨，主人！'`);
+    await execIn('chatSettingsWin', `document.getElementById('addBtn').click()`);
+    await sleep(250);
+    let st = mainState();
+    results.push({
+      name: '聊天规则持久化到 settings',
+      ok: Array.isArray(st.chatRules) && st.chatRules.some((r) => r.keyword === '你好' && r.reply === '嗨，主人！'),
+    });
+
+    const lastPetReply = `(() => {
+      const els = document.querySelectorAll('#msgs .msg.pet');
+      return els.length ? els[els.length - 1].textContent : null;
+    })()`;
+
+    // ② 命中：聊天窗发送 → 回复渲染 + 主窗气泡
+    await execIn('chatWin', `document.getElementById('input').value = '你好呀'`);
+    await execIn('chatWin', `document.getElementById('sendBtn').click()`);
+    let replyShown = false;
+    for (let i = 0; i < 40 && !replyShown; i++) {
+      await sleep(100);
+      replyShown = await execIn('chatWin', `${lastPetReply} === '嗨，主人！'`);
+    }
+    results.push({ name: '命中关键词 → 回复渲染在聊天窗', ok: replyShown === true });
+    await waitFor(js, `document.getElementById('bubble').classList.contains('show') && document.getElementById('bubble').textContent.includes('嗨，主人！')`, 4000, '聊天回复气泡');
+    results.push({ name: '主窗气泡同步显示桌宠回复', ok: true });
+    await js(`window.__petTest.hideBubble()`);
+
+    // ③ 未命中：无回复气泡，主窗 Q 弹 + 情绪变化
+    const mood0 = (await js('window.__petState().status')).mood;
+    await execIn('chatWin', `document.getElementById('input').value = 'xkcd乱入词'`);
+    await execIn('chatWin', `document.getElementById('sendBtn').click()`);
+    await sleep(300);
+    const st2 = await js('window.__petState()');
+    const noBubble = await js(`!document.getElementById('bubble').classList.contains('show')`);
+    results.push({ name: `未命中 → 情绪变化(${mood0}→${st2.status.mood})且无回复气泡`, ok: st2.status.mood >= mood0 + 1.5 && noBubble === true });
+
+    // ④ 最长关键词优先：再添加 你好呀 → 咦，叫我？
+    await execIn('chatSettingsWin', `document.getElementById('keyword').value = '你好呀'`);
+    await execIn('chatSettingsWin', `document.getElementById('reply').value = '咦，叫我？'`);
+    await execIn('chatSettingsWin', `document.getElementById('addBtn').click()`);
+    await sleep(250);
+    await execIn('chatWin', `document.getElementById('input').value = '你好呀'`);
+    await execIn('chatWin', `document.getElementById('sendBtn').click()`);
+    let longHit = false;
+    for (let i = 0; i < 40 && !longHit; i++) {
+      await sleep(100);
+      longHit = await execIn('chatWin', `${lastPetReply} === '咦，叫我？'`);
+    }
+    results.push({ name: '多命中时用最长关键词的回复', ok: longHit === true });
+
+    // ⑤ 删除规则（按 keyword）→ 持久化
+    await execIn('chatSettingsWin', `document.querySelector('#list .row .delBtn').click()`);
+    await sleep(250);
+    st = mainState();
+    results.push({ name: `删除规则(剩 ${st.chatRules.length} 条)`, ok: st.chatRules.length === 1 && st.chatRules[0].keyword === '你好呀' });
+
+    // ⑥ 关闭窗口（不残留）
+    await execIn('chatWin', `window.close()`);
+    await execIn('chatSettingsWin', `window.close()`);
+    await sleep(200);
+
+    return assertMap(results);
+  },
+
   /** 抛掷物理：注入速度→宠物真实飞动并最终落地回待机。 */
   async dragPhysics(ctx) {
     const { js, sleep } = ctx;

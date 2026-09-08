@@ -15,6 +15,7 @@ const fs = require('fs');
 const { CFG } = require('../shared/config');
 const { computeRegion, defaultRegionSettings } = require('../shared/region');
 const { findDueTodos, formatTask, normalizeTodo, pickReminderTodo, randomReminderDelay } = require('../shared/todo');
+const { matchChatRule } = require('../shared/chat');
 const { Store } = require('./store');
 const { WinEnum, isSystemWindow } = require('./winenum');
 
@@ -57,6 +58,8 @@ class PetApp {
     this.todoTimer = 0;           // 到期检查定时器
     this.remindedTodoIds = new Set(); // 已提醒过的到期待办（本次运行内不重复弹）
     this.reminderTimer = 0;       // 随机催促定时器
+    this.chatWin = null;          // 聊天窗口
+    this.chatSettingsWin = null;  // 聊天设置窗口
   }
 
   async init() {
@@ -260,6 +263,12 @@ class PetApp {
     ipcMain.handle('todo:add', (_e, t) => this.todoAdd(t));
     ipcMain.handle('todo:update', (_e, id, patch) => this.todoUpdate(id, patch));
     ipcMain.handle('todo:remove', (_e, id) => this.todoRemove(id));
+
+    // 聊天（独立窗口；回复规则持久化在 settings.json 的 chatRules 字段）
+    ipcMain.handle('chat:send', (_e, text) => this.chatSend(text));
+    ipcMain.handle('chatRules:load', () => this.store.get().chatRules || []);
+    ipcMain.handle('chatRules:add', (_e, rule) => this.chatRuleAdd(rule));
+    ipcMain.handle('chatRules:remove', (_e, keyword) => this.chatRuleRemove(keyword));
 
     // 右键长按触发的 Windows 风格主菜单（Phase 4）
     ipcMain.on('menu:open', () => this.popupMainMenu());
@@ -466,6 +475,97 @@ class PetApp {
     this.send('bubble:reminder', { text, ms: CFG.reminder.durationMs });
   }
 
+  /* ---------------- 聊天 ---------------- */
+
+  /** 聊天窗口：普通不透明窗口，展示历史消息与输入框。 */
+  openChatWindow() {
+    if (this.chatWin && !this.chatWin.isDestroyed()) { this.chatWin.show(); return; }
+    const w = new BrowserWindow({
+      title: '聊天',
+      width: CFG.chat.windowWidth,
+      height: CFG.chat.windowHeight,
+      resizable: true,
+      minimizable: true,
+      maximizable: false,
+      fullscreenable: false,
+      webPreferences: {
+        nodeIntegration: true,
+        contextIsolation: false,
+        sandbox: false,
+        backgroundThrottling: false,
+        spellcheck: false, // 同主窗：避免 Windows 拼写检查在 cwd 产生乱码目录
+      },
+    });
+    this.chatWin = w;
+    w.setMenu(null);
+    w.loadFile(path.join(__dirname, '..', 'renderer', 'chat.html'));
+    w.on('closed', () => { if (this.chatWin === w) this.chatWin = null; });
+  }
+
+  /** 聊天设置窗口：添加/删除“关键词 → 回复”规则。 */
+  openChatSettingsWindow() {
+    if (this.chatSettingsWin && !this.chatSettingsWin.isDestroyed()) { this.chatSettingsWin.show(); return; }
+    const w = new BrowserWindow({
+      title: '聊天设置',
+      width: CFG.chat.settingsWidth,
+      height: CFG.chat.settingsHeight,
+      resizable: true,
+      minimizable: true,
+      maximizable: false,
+      fullscreenable: false,
+      webPreferences: {
+        nodeIntegration: true,
+        contextIsolation: false,
+        sandbox: false,
+        backgroundThrottling: false,
+        spellcheck: false,
+      },
+    });
+    this.chatSettingsWin = w;
+    w.setMenu(null);
+    w.loadFile(path.join(__dirname, '..', 'renderer', 'chatSettings.html'));
+    w.on('closed', () => { if (this.chatSettingsWin === w) this.chatSettingsWin = null; });
+  }
+
+  /** 处理一句聊天输入：命中关键词 → 回复 + 主窗气泡；未命中 → 模拟被点击（Q 弹 + 情绪变化）。 */
+  chatSend(text) {
+    const input = String(text == null ? '' : text).slice(0, 500);
+    if (!input.trim()) return { ok: false, matched: false, reply: null };
+    const rule = matchChatRule(this.store.get().chatRules || [], input);
+    if (rule) {
+      this.send('bubble:chat', { text: rule.reply, ms: CFG.chat.bubbleDurationMs });
+      return { ok: true, matched: true, reply: rule.reply, keyword: rule.keyword };
+    }
+    this.send('pet:action', { type: 'headpat' });
+    return { ok: true, matched: false, reply: null };
+  }
+
+  chatRuleAdd(rule) {
+    const keyword = rule && typeof rule.keyword === 'string' ? rule.keyword.trim().slice(0, 100) : '';
+    const reply = rule && typeof rule.reply === 'string' ? rule.reply.slice(0, 500) : '';
+    if (!keyword || !reply) return { ok: false, rules: this.store.get().chatRules || [] };
+    const rules = (this.store.get().chatRules || []).filter((r) => r.keyword !== keyword);
+    rules.push({ keyword, reply });
+    this.store.update({ chatRules: rules }).saveNow();
+    this.chatRulesChanged();
+    return { ok: true, rules };
+  }
+
+  chatRuleRemove(keyword) {
+    const rules = (this.store.get().chatRules || []).filter((r) => r.keyword !== keyword);
+    this.store.update({ chatRules: rules }).saveNow();
+    this.chatRulesChanged();
+    return { ok: true, rules };
+  }
+
+  chatRulesChanged() {
+    const payload = { rules: this.store.get().chatRules || [] };
+    if (this.chatSettingsWin && !this.chatSettingsWin.isDestroyed()) {
+      this.chatSettingsWin.webContents.send('chatRules:changed', payload);
+    }
+    if (this.chatWin && !this.chatWin.isDestroyed()) this.chatWin.webContents.send('chatRules:changed', payload);
+  }
+
   /* ---------------- 托盘 ---------------- */
 
   createTray() {
@@ -556,6 +656,13 @@ class PetApp {
       { label: '休息', click: () => self.act('rest') },
       { label: '喂食', click: () => self.act('feed') },
       { label: '待办…', click: () => self.openTodoWindow() },
+      {
+        label: '聊天',
+        submenu: [
+          { label: '聊天', click: () => self.openChatWindow() },
+          { label: '聊天设置', click: () => self.openChatSettingsWindow() },
+        ],
+      },
       {
         label: `音乐${playlist.length ? `（${playlist.length}）` : ''}`,
         submenu: [

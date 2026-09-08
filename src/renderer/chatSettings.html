@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta
+    http-equiv="Content-Security-Policy"
+    content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:"
+  />
+  <title>聊天设置</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #fafafa; color: #222;
+      font: 13px/1.6 "Microsoft YaHei", sans-serif; user-select: none; -webkit-user-select: none; }
+    body { display: flex; flex-direction: column; box-sizing: border-box; padding: 12px 14px; }
+    header h1 { font-size: 15px; margin: 0 0 2px; }
+    header .tip { color: #888; font-size: 12px; margin-bottom: 8px; }
+    #addRow { display: flex; flex-direction: column; gap: 6px; padding: 8px;
+      border: 1px solid #e0e0e0; border-radius: 8px; background: #fff; }
+    #addRow input { font: 13px/1.6 "Microsoft YaHei"; padding: 4px 8px;
+      border: 1px solid #ccc; border-radius: 6px; }
+    #addRow .foot { display: flex; justify-content: flex-end; }
+    button { font: 12px/1.6 "Microsoft YaHei"; padding: 3px 12px; border-radius: 6px;
+      border: 1px solid #bbb; background: #f2f2f2; cursor: pointer; }
+    button:hover { background: #e5f1fb; }
+    button.primary { background: #2f9bff; border-color: #1b7fdd; color: #fff; font-weight: 700; }
+    button.primary:hover { background: #1f8aef; }
+    #list { flex: 1 1 auto; overflow: auto; margin-top: 8px; }
+    .row { display: flex; align-items: center; gap: 8px; padding: 6px 9px;
+      border: 1px solid #e6e6e6; border-radius: 8px; background: #fff; margin-bottom: 6px; }
+    .row .kw { flex: 0 0 35%; font-weight: 700; word-break: break-all; }
+    .row .rp { flex: 1 1 auto; color: #444; word-break: break-all; }
+    .row .delBtn { flex: 0 0 auto; border: none; background: none; color: #999; font-size: 13px; }
+    .row .delBtn:hover { color: #e05555; }
+    .empty { color: #aaa; text-align: center; padding: 24px 0; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>聊天设置</h1>
+    <div class="tip">输入里包含关键词时桌宠按对应的回复说话；同时命中多条时用关键词最长的那条。忽略大小写。</div>
+  </header>
+  <section id="addRow">
+    <input id="keyword" type="text" maxlength="100" placeholder="关键词，例如：你好" spellcheck="false" />
+    <input id="reply" type="text" maxlength="500" placeholder="桌宠的回复，例如：嗨，主人！" spellcheck="false" />
+    <div class="foot"><button id="addBtn" class="primary">添加规则</button></div>
+  </section>
+  <main id="list"></main>
+  <script src="./chatSettings.js"></script>
+</body>
+</html>
