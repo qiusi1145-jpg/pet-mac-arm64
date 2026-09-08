@@ -12,7 +12,7 @@ const path = require('path');
 const ROOT = path.join(__dirname, '..', '..');
 const ELECTRON = require('electron');
 
-const ALL_SCENARIOS = ['greeting', 'blink', 'stateVisual', 'lock', 'todo', 'reminder', 'chat', 'anim', 'dragPhysics', 'snap', 'physOff', 'status', 'passthrough', 'picker', 'bg', 'menuClean', 'audio', 'rest'];
+const ALL_SCENARIOS = ['greeting', 'blink', 'blinkAnim', 'stateVisual', 'lock', 'todo', 'reminder', 'chat', 'anim', 'dragPhysics', 'snap', 'physOff', 'status', 'passthrough', 'picker', 'bg', 'menuClean', 'audio', 'rest'];
 // PET_UI_ONLY='bg,audio' 只跑指定场景，便于调试单个新场景
 const ONLY = (process.env.PET_UI_ONLY || '').split(',').map((s) => s.trim()).filter(Boolean);
 const SCENARIOS = ONLY.length ? ONLY : ALL_SCENARIOS;
@@ -44,7 +44,7 @@ async function runOne(name) {
     PET_USERDATA: userData,
     ELECTRON_ENABLE_LOGGING: '1',
   };
-  if (name === 'bg') env.PET_BG_PATH = path.join(__dirname, '..', 'fixtures', 'bg-160x64.png');
+  if (name === 'bg' || name === 'picker') env.PET_BG_PATH = path.join(__dirname, '..', 'fixtures', 'bg-160x64.png');
   if (name === 'audio') {
     const inbox = path.join(userData, 'audio-inbox');
     fs.mkdirSync(inbox, { recursive: true });

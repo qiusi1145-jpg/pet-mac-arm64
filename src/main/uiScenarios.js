@@ -118,49 +118,89 @@ const scenarios = {
     return r.visible && r.hidden && r.hitWhileVisible === true && r.hitWhileHidden === true;
   },
 
-  /** 状态图：两套形态互斥（显示状态图时原图整体隐藏），只切换视觉层，不改变点击判定。 */
+  /** 眨眼动画（多帧）：依次播放两帧、帧间切换 src、播完恢复常态。 */
+  async blinkAnim(ctx) {
+    const { js } = ctx;
+    await waitFor(js, 'window.__petReady && window.__petState().petLoaded', 12000, 'renderer ready + pet');
+    const seq = await js(`(async () => {
+      const T = window.__petTest;
+      const mk = (color) => {
+        const c = document.createElement('canvas'); c.width = 8; c.height = 8;
+        const g = c.getContext('2d'); g.fillStyle = color; g.fillRect(0, 0, 8, 8);
+        return c.toDataURL('image/png');
+      };
+      T.setBlinkAnim([
+        { src: mk('#ff0000'), durationMs: 120 },
+        { src: mk('#00ff00'), durationMs: 120 },
+      ], 1);
+      const started = T.playBlinkAnim();
+      await new Promise((r2) => setTimeout(r2, 60));   // t≈60：第一帧显示中
+      const firstVisible = document.getElementById('blink').style.display === 'block';
+      const firstSrc = document.getElementById('blink').src;
+      await new Promise((r2) => setTimeout(r2, 120));  // t≈180：第二帧显示中
+      const secondSrc = document.getElementById('blink').src;
+      await new Promise((r2) => setTimeout(r2, 250));  // t≈430：已播完恢复
+      const doneHidden = document.getElementById('blink').style.display === 'none';
+      const st = T.state();
+      T.setBlinkAnim([], 1);
+      return { started, firstVisible, firstSrc, secondSrc, doneHidden, frames: st.blinkAnim.frames };
+    })()`);
+    return seq && seq.started === true && seq.frames === 2 &&
+      seq.firstVisible === true && seq.doneHidden === true && seq.firstSrc !== seq.secondSrc;
+  },
+
+  /** 状态切换 = 换一具身体：状态形象有自己的位图/锚点/尺寸，判定等一切随当前身体走；
+   *  切换保持底边中点位置连续（原地换装）；闭眼图属于主形象 → 状态形态不眨眼；不影响状态数值。 */
   async stateVisual(ctx) {
     const { js } = ctx;
     await waitFor(js, 'window.__petReady && window.__petState().petLoaded', 12000, 'renderer ready + pet');
     const r = await js(`(() => {
       const T = window.__petTest;
-      const s = T.state();
-      const p = s.pet;
-      let hit = null;
-      outer:
-      for (let dy = -10; dy <= 10; dy++) {
-        for (let dx = -10; dx <= 10; dx++) {
-          const x = p.x + Math.round(p.anchor.x) + dx;
-          const y = p.y + Math.round(p.anchor.y) + dy;
-          if (T.isInteractableAt(x, y)) { hit = { x, y }; break outer; }
+      const findHit = () => {                 // 在“当前身体”锚点附近找可交互点（判定随身体走）
+        const p = T.state().pet;
+        for (let dy = -10; dy <= 10; dy++) {
+          for (let dx = -10; dx <= 10; dx++) {
+            const x = p.x + Math.round(p.anchor.x) + dx;
+            const y = p.y + Math.round(p.anchor.y) + dy;
+            if (T.isInteractableAt(x, y)) return { x, y };
+          }
         }
-      }
-      const status0 = T.state().status;
+        return null;
+      };
+      const bottomCenter = () => { const p = T.state().pet; return { b: p.y + p.h, cx: p.x + p.w / 2 }; };
+      const s0 = T.state();
+      const hit0 = findHit();
+      const bc0 = bottomCenter();
       const shown = T.toggleStateVisual();
-      const visible = document.getElementById('state').style.display === 'block';
-      const petHidden = T.state().petCanvasHidden;          // 原图层整体隐藏（不是叠加）
-      const blinkSuppressed = (() => {                       // 闭眼图属于主形象 → 状态形态不眨眼
+      const st1 = T.state();
+      const bc1 = bottomCenter();
+      const hit1 = findHit();
+      const blinkSuppressed = (() => {        // 闭眼图属于主形象 → 状态形态不眨眼
         T.forceBlink(true);
         const suppressed = document.getElementById('blink').style.display !== 'block';
         T.forceBlink(false);
         return suppressed;
       })();
-      const hitWhileVisible = T.isInteractableAt(hit.x, hit.y);
-      const status1 = T.state().status;
+      const status1 = st1.status;
       const hiddenAgain = !T.toggleStateVisual();
-      const petBackVisible = document.getElementById('pet').style.display !== 'none';
-      const stateHiddenAgain = document.getElementById('state').style.display === 'none';
-      const hitWhileHidden = T.isInteractableAt(hit.x, hit.y);
-      const status2 = T.state().status;
-      return { shown, visible, petHidden, blinkSuppressed, hitWhileVisible, status1,
-        hiddenAgain, petBackVisible, stateHiddenAgain, hitWhileHidden, status2, status0 };
+      const st2 = T.state();
+      const bc2 = bottomCenter();
+      const hit2 = findHit();
+      const status2 = st2.status;
+      return { status0: s0.status, shown, visible: st1.stateVisualVisible, bodyKind: st1.bodyKind,
+        stateBodyReady: st1.stateBodyReady, bc0, bc1, hit1, blinkSuppressed, status1,
+        hiddenAgain, bodyBack: st2.bodyKind, visibleBack: st2.stateVisualVisible, bc2, hit0, hit2, status2 };
     })()`);
+    const near = (a, b, eps = 1.5) => Math.abs(a - b) <= eps;
     const sameStatus = (a, b) => a && b &&
       a.mood === b.mood && a.energy === b.energy && a.satiety === b.satiety && a.affinity === b.affinity;
-    return r.shown === true && r.visible === true && r.petHidden === true && r.blinkSuppressed === true &&
-      r.hitWhileVisible === true &&
-      r.hiddenAgain === true && r.petBackVisible === true && r.stateHiddenAgain === true && r.hitWhileHidden === true &&
-      sameStatus(r.status0, r.status1) && sameStatus(r.status0, r.status2);
+    return r.shown === true && r.visible === true && r.stateBodyReady === true && r.bodyKind === 'state' &&
+      near(r.bc1.b, r.bc0.b) && near(r.bc1.cx, r.bc0.cx) &&          // 底边中点连续（原地换装）
+      !!r.hit0 && !!r.hit1 && !!r.hit2 &&                            // 两种形态都可命中（判定随身体走）
+      r.blinkSuppressed === true &&
+      r.hiddenAgain === true && r.visibleBack === false && r.bodyBack === 'main' &&
+      near(r.bc2.b, r.bc0.b) && near(r.bc2.cx, r.bc0.cx) &&          // 切回位置仍连续
+      sameStatus(r.status1, r.status0) && sameStatus(r.status2, r.status0); // 切形态不动状态数值
   },
 
   /**
@@ -575,17 +615,20 @@ const scenarios = {
   },
 
   /**
-   * 应用内图片选择器（更换宠物不再依赖系统文件对话框，红线1不回归）：
-   * 打开 → 列到 fixture 图片 → 面板参与命中判定 → 选中并“设为宠物”→ 走真实
-   * 导入/解码/替换路径 → 替换成功且面板自动关闭。
+   * 应用内图片选择器（背景模式 —— "更换宠物"已移除，宠物素材走素材根目录/开发者模式）：
+   * 打开 → 列到 fixture 图片 → 面板参与命中判定 → 选中"设为背景" → 真实导入/设置路径 →
+   * 背景生效且面板自动关闭。
    */
   async picker(ctx) {
     const { js, sleep } = ctx;
     await waitFor(js, 'window.__petReady && window.__petState().petLoaded', 12000, 'renderer ready + pet');
     const results = [];
-    const dir = nodePath.dirname(process.env.PET_PET_PATH);
+    const bgSrc = process.env.PET_BG_PATH;
+    if (!bgSrc) { console.error('[scenario] 缺 PET_BG_PATH'); return false; }
+    const dir = nodePath.dirname(bgSrc);
+    const bgName = nodePath.basename(bgSrc);
 
-    await js(`window.__petTest.openPicker('pet', ${JSON.stringify(dir)})`);
+    await js(`window.__petTest.openPicker('bg', ${JSON.stringify(dir)})`);
     await waitFor(js, `window.__petTest.pickerFiles().names.length > 0`, 6000, 'picker 列到图片');
     const st = await js(`(() => {
       const T = window.__petTest;
@@ -595,20 +638,19 @@ const scenarios = {
     })()`);
     results.push({ name: `选择器已打开 open=${st.open}`, ok: st.open === true });
     results.push({ name: '选择器面板参与命中（指针在其上不穿透）', ok: st.hit === true });
-    results.push({ name: `列到 fixture 图片(${st.names && st.names.length})`, ok: Array.isArray(st.names) && st.names.some((n) => /pet-96/.test(n)) });
+    results.push({ name: `列到 fixture 图片(${st.names && st.names.length})`, ok: Array.isArray(st.names) && st.names.some((n) => n === bgName) });
 
-    // 选中 pet-96.png（fixtures 里还有全透明的 blank-16，别点到它）→ 点“把这张设为宠物”
-    const petName = nodePath.basename(process.env.PET_PET_PATH);
+    // 选中背景图 → "把这张设为背景" → 真实导入/设置路径 → 面板自动关闭、背景生效
     await js(`(() => {
       const rows = Array.from(document.querySelectorAll('#petPicker .pk-item'));
-      const row = rows.find((el) => el.textContent === ${JSON.stringify(petName)}) || rows[0];
+      const row = rows.find((el) => el.textContent === ${JSON.stringify(bgName)}) || rows[0];
       row.click();
     })()`);
     await sleep(120);
     await js(`document.getElementById('pkUse').click()`);
-    await waitFor(js, `window.__petState().petPickerOpen === false`, 8000, '替换成功后选择器自动关闭');
-    const okPet = await js(`window.__petState().petLoaded`);
-    results.push({ name: '替换后宠物仍处于加载态', ok: okPet === true });
+    await waitFor(js, `window.__petState().petPickerOpen === false`, 8000, '设置背景成功后选择器自动关闭');
+    const bgOn = await js(`window.__petState().bgOn`);
+    results.push({ name: '背景已生效(bgOn=true)', ok: bgOn === true });
 
     return assertMap(results);
   },

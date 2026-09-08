@@ -9,7 +9,7 @@
  */
 const fs = require('fs');
 const path = require('path');
-const { execFileSync, spawnSync } = require('child_process');
+const { execFile, spawnSync } = require('child_process');
 
 const CS_SOURCE = `
 using System;
@@ -63,10 +63,30 @@ function findCsc() {
   return null;
 }
 
+/** 窗口扩展样式修改小工具（编译一次常驻复用）：winstyle.exe <hwnd十进制> <要加的位> <要清的位> */
+const STYLE_SOURCE = `
+using System;
+using System.Runtime.InteropServices;
+class WinStyle {
+  [DllImport("user32.dll")] static extern int GetWindowLong(IntPtr h, int i);
+  [DllImport("user32.dll")] static extern int SetWindowLong(IntPtr h, int i, int v);
+  static int Main(string[] args) {
+    if (args.Length < 3) return 2;
+    var h = new IntPtr(long.Parse(args[0]));
+    var add = unchecked((int)long.Parse(args[1]));
+    var remove = unchecked((int)long.Parse(args[2]));
+    var cur = GetWindowLong(h, -20); // GWL_EXSTYLE
+    SetWindowLong(h, -20, (cur | add) & ~remove);
+    return 0;
+  }
+}
+`;
+
 class WinEnum {
   constructor(userData) {
     this.userData = userData;
     this.exe = null;
+    this.styleExe = null;
     this.compileError = null;
   }
 
@@ -93,34 +113,80 @@ class WinEnum {
     }
   }
 
+  /** 确保已编译出样式修改 exe；返回 exe 路径或 null。 */
+  ensureStyle(userData = this.userData) {
+    if (this.styleExe) return this.styleExe;
+    const dir = path.join(userData, 'winenum');
+    const exe = path.join(dir, 'winstyle.exe');
+    if (fs.existsSync(exe)) { this.styleExe = exe; return exe; }
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+      const src = path.join(dir, 'winstyle.cs');
+      fs.writeFileSync(src, STYLE_SOURCE, 'utf8');
+      const csc = findCsc();
+      if (!csc) throw new Error('csc.exe not found');
+      const r = spawnSync(csc, ['/nologo', '/optimize+', '/target:exe', `/out:${exe}`, src], { encoding: 'utf8', windowsHide: true });
+      if (r.status !== 0) throw new Error((r.stderr || r.stdout || 'compile fail').slice(0, 400));
+      this.styleExe = exe;
+      return exe;
+    } catch (e) {
+      console.error('[winenum] 样式工具编译失败：', e.message);
+      return null;
+    }
+  }
+
   /**
-   * 枚举可见顶层窗口。返回形如：
+   * 修改窗口扩展样式（异步，不阻塞主进程）。
+   * addMask / removeMask：要置位 / 要清位的掩码（十进制字符串或 number）。
+   */
+  applyExStyle(hwndDec, addMask, removeMask) {
+    const exe = this.ensureStyle();
+    if (!exe) return Promise.resolve(false);
+    return new Promise((resolve) => {
+      execFile(exe, [String(hwndDec), String(addMask), String(removeMask)], { windowsHide: true }, (err) => {
+        if (err) console.error('[winenum] applyExStyle failed', err.message);
+        resolve(!err);
+      });
+    });
+  }
+
+  /**
+   * 枚举可见顶层窗口（异步 spawn：不阻塞主进程事件循环——松手吸附/吸附轮询都会走到
+   * 这里，同步 spawn 会在主进程卡几十毫秒，叠加穿透转发的低级鼠标钩子还会拖慢全系统
+   * 鼠标）。返回形如：
    * [{ id, cls, title, left, top, right, bottom, minimized }]
    * 过滤掉无尺寸的。系统外壳等留给调用方过滤。
    */
   list(userData = this.userData) {
-    if (!this.ensure(userData)) return [];
-    try {
-      const out = execFileSync(this.exe, [], { encoding: 'utf8', windowsHide: true, maxBuffer: 1 << 20 });
-      const wins = [];
-      for (const line of out.split(/\r?\n/)) {
-        const p = line.split('\t');
-        if (p.length < 8) continue;
-        const [id, cls, title, left, top, right, bottom, mini] = p;
-        const L = Number(left), T = Number(top), R = Number(right), B = Number(bottom);
-        if (!Number.isFinite(L + T + R + B)) continue;
-        if (R <= L || B <= T) continue;
-        wins.push({
-          id, cls, title,
-          left: L, top: T, right: R, bottom: B,
-          minimized: mini === '1',
-        });
-      }
-      return wins;
-    } catch (e) {
-      console.error('[winenum] enumerate failed', e.message);
-      return [];
+    return new Promise((resolve) => {
+      if (!this.ensure(userData)) return resolve([]);
+      execFile(this.exe, [], { encoding: 'utf8', windowsHide: true, maxBuffer: 1 << 20 }, (err, out) => {
+        if (err) {
+          console.error('[winenum] enumerate failed', err.message);
+          return resolve([]);
+        }
+        resolve(this.parse(out));
+      });
+    });
+  }
+
+  /** 解析 exe 的 TSV 输出为窗口列表。 */
+  parse(out) {
+    const wins = [];
+    for (const line of String(out).split(/\r?\n/)) {
+      const p = line.split('\t');
+      if (p.length < 8) continue;
+      const [id, cls, title, left, top, right, bottom, mini] = p;
+      const L = Number(left), T = Number(top), R = Number(right), B = Number(bottom);
+      if (!Number.isFinite(L + T + R + B)) continue;
+      if (R <= L || B <= T) continue;
+      wins.push({
+        id, cls, title,
+        left: L, top: T, right: R, bottom: B,
+        minimized: mini === '1',
+      });
     }
+    return wins;
   }
 }
 

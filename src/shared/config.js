@@ -282,9 +282,113 @@ const CFG = {
     settingsHeight: 500,
     // 桌宠在主窗口回复气泡的停留时长（ms）。
     bubbleDurationMs: 5000,
+    // 聊天窗口文案（可在开发者模式中改，交付固化进 baked-defaults）。
+    strings: {
+      opening: '主人好呀，跟我说说话吧！',       // 聊天窗开场白
+      missNotice: '（桌宠歪了歪头，好像没听懂……）', // 未命中关键词时的轻提示
+    },
+  },
+
+  /* ---------- 主菜单文本与可见性（可定制） ----------
+   * id → 默认文案；可见性默认全开（visible 由覆盖配置控制，false = 菜单里隐藏该项，
+   * 功能逻辑本身不受影响）。主进程 popupMainMenu 按 id 取文本/可见性组装菜单。
+   * 「更换宠物…」已随"换图即定制"设计移除（素材替换走素材根目录/开发者模式）。 */
+  menu: {
+    items: {
+      rest: { label: '休息' },
+      feed: { label: '喂食' },
+      todo: { label: '待办…' },
+      chat: { label: '聊天' },
+      chatOpen: { label: '聊天' },
+      chatSettings: { label: '聊天设置' },
+      music: { label: '音乐' }, // 显示时会追加曲目数“（N）”
+      musicAdd: { label: '添加音乐…' },
+      musicToggle: { label: '播放 / 暂停' },
+      musicNext: { label: '下一首' },
+      musicPrev: { label: '上一首' },
+      musicStop: { label: '停止播放' },
+      musicClear: { label: '清空列表' },
+      bg: { label: '背景' }, // 已设置背景时显示时会追加“（已设置）”
+      bgPick: { label: '选择背景图片…' },
+      bgClear: { label: '清除背景' },
+      bgOp25: { label: '不透明度 25%' },
+      bgOp50: { label: '不透明度 50%' },
+      bgOp75: { label: '不透明度 75%' },
+      bgOp100: { label: '不透明度 100%' },
+      state: { label: '切换状态' },
+      stateMain: { label: '主宠物图' },
+      stateAlt: { label: '状态图' },
+      resetStatus: { label: '重置状态' },
+      quit: { label: '退出' },
+    },
+  },
+
+  /* ---------- 眨眼动画（多帧序列增强） ----------
+   * frames 非空时：每次眨眼机会按 probability 概率依次播放帧序列（每帧各自 durationMs），
+   * 播完恢复常态；frames 为空时降级为原有单图眨眼（src/assets/blink.png）。
+   * 帧图片由开发者模式拷贝进素材根目录（userData/assets/pet/）。 */
+  blinkAnim: {
+    frames: [], // [{ path, durationMs }]
+    probability: 1, // 0~1：每次眨眼机会播放动画序列的概率
+    defaultFrameMs: 150, // 新帧未填时长时的默认显示时长
+  },
+
+  /* ---------- 素材路径覆盖（默认 null = 用内置占位图/约定路径） ---------- */
+  stateImage: {
+    path: null, // 状态切换图覆盖路径；null = 用 src/assets/state.png
+  },
+  pet: {
+    path: null, // 宠物主图覆盖路径；null = 依次回退素材根目录 pet.png → settings.json 旧值
   },
 };
 
+/* ==================== 交付固化合并层 ====================
+ * 开发者模式的“固化配置到代码”脚本会把当前生效的可定制值写到 src/shared/baked-defaults.json，
+ * 在这里合并为应用的新默认值（交付后删除开发者模式，固化值仍然生效）。
+ * 没有该文件时 = 纯内置默认，try/catch 保证零依赖。 */
+
+/** 深合并：对象递归合并，数组/标量直接替换（patch 优先）。 */
+function deepMerge(base, patch) {
+  if (Array.isArray(patch) || patch === null || typeof patch !== 'object') return patch;
+  if (base === null || typeof base !== 'object' || Array.isArray(base)) return patch;
+  const out = { ...base };
+  for (const k of Object.keys(patch)) out[k] = deepMerge(out[k], patch[k]);
+  return out;
+}
+
+/** 可定制的默认值路径（固化脚本与开发者配置共用这一份清单）。 */
+const OVERRIDABLE_PATHS = [
+  'menu',
+  'greeting',
+  'chat.strings',
+  'todo.remindTemplate',
+  'reminder.template',
+  'blinkAnim',
+  'stateImage',
+  'pet',
+];
+
+const getAtPath = (obj, path) => path.split('.').reduce((o, k) => (o == null ? undefined : o[k]), obj);
+const setAtPath = (obj, path, val) => {
+  const ks = path.split('.');
+  let o = obj;
+  for (let i = 0; i < ks.length - 1; i++) {
+    if (o[ks[i]] == null || typeof o[ks[i]] !== 'object') o[ks[i]] = {};
+    o = o[ks[i]];
+  }
+  o[ks[ks.length - 1]] = val;
+};
+
+let bakedDefaults = {};
+try { bakedDefaults = require('./baked-defaults.json'); } catch { /* 尚未固化：用内置默认 */ }
+
+const mergedOverridables = {};
+for (const p of OVERRIDABLE_PATHS) {
+  const bakedVal = getAtPath(bakedDefaults, p);
+  if (bakedVal !== undefined) setAtPath(CFG, p, deepMerge(getAtPath(CFG, p), bakedVal));
+  setAtPath(mergedOverridables, p, getAtPath(CFG, p));
+}
+
 deepFreeze(CFG);
 
-module.exports = { CFG, deepFreeze };
+module.exports = { CFG, deepFreeze, deepMerge, OVERRIDABLE_PATHS, OVERRIDABLES: mergedOverridables };

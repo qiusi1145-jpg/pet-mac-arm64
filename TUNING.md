@@ -3,6 +3,10 @@
 所有可调参数都集中在 **`src/shared/config.js`**（模块加载时深冻结，运行期不可改；想调就改文件后重启）。
 下表是每个参数的作用与改法建议。改完请跑 `npm test`，若涉及物理/吸附/动画再跑 `npm run test:ui`。
 
+> 配置分层：`config.js` 内置默认 ← `src/shared/baked-defaults.json`（交付固化层，可选）。
+> 读值统一走 `src/shared/overrides.js` 的 `ov(path, 默认值)`——运行期覆盖表已随开发者模式移除而恒为空，
+> 所以当前所有值 = 内置默认（或固化层）。
+
 ## `image` —— 图片 / 交互几何
 
 | 参数 | 默认 | 作用 | 手感 |
@@ -49,8 +53,8 @@
 | `stopSpeedX` / `stopSpeedY` | 26 / 40 | 贴地后水平/竖直速度低于该值视为“稳定” | 越大停得越快 |
 | `settleMs` | 300 | 稳定后缓冲多久才回待机 | |
 | `snapProximityY` | 120 | 锚点距窗口顶沿多近才吸附（竖直） | 2026-09-08 按需求较最初的 60 翻倍，更容易吸附 |
-| `snapMarginX` | 10 | 锚点水平超出窗口左右允许余量 | |
-| `snapMaxSpeed` | 220 | 释放速度低于它才尝试吸附 | 调大 → 稍快也能吸上 |
+| `snapMarginX` | 25 | 锚点水平超出窗口左右允许余量 | |
+| `snapMaxSpeed` | 220 | **保留字段（当前未接线）**：代码实际只用 `throwSpeedThreshold` 区分抛掷/低速，吸附不检查该值 | 改它无效果 |
 | `groundDrag` | 1.8 | 贴地滚动额外摩擦 | 越大滚两下就停 |
 | `maxBounceGuard` | 200 | 反弹次数保护（防发散） | 勿乱改 |
 
@@ -131,6 +135,35 @@
 | `windowWidth` / `windowHeight` | 400 / 540 | 聊天窗口初始尺寸 | 可调整大小 |
 | `settingsWidth` / `settingsHeight` | 460 / 500 | 聊天设置窗口初始尺寸 | |
 | `bubbleDurationMs` | 5000 | 桌宠回复在主窗气泡的停留时长 | |
+| `strings.opening` | 主人好呀，跟我说说话吧！ | 聊天窗开场白 | 可定制（config.js / 固化层） |
+| `strings.missNotice` | （桌宠歪了歪头，好像没听懂……） | 未命中关键词的轻提示 | 可定制 |
+
+## `menu` —— 主菜单文本与可见性（2026-09-08 新增）
+
+`menu.items.<id>.label` 为每个菜单项（含子菜单）的默认文案，id 全集：
+`rest / feed / todo / chat / chatOpen / chatSettings / music / musicAdd / musicToggle / musicNext /
+musicPrev / musicStop / musicClear / bg / bgPick / bgClear / bgOp25~bgOp100 / state / stateMain / stateAlt /
+resetStatus / quit`。可见性默认全开，覆盖配置里 `visible: false` = 菜单隐藏该项（功能逻辑不受影响）。
+主进程 `popupMainMenu()` 按 id 组装——**增删菜单项要同步改 `config.js` 与 `main.js` 的 template 两处**。
+「更换宠物…」已随"换图即定制"设计移除。
+
+## `blinkAnim` —— 多帧眨眼动画（2026-09-08 新增）
+
+| 参数 | 默认 | 作用 | 说明 |
+| --- | --- | --- | --- |
+| `frames` | `[]` | 帧序列 `[{path, durationMs}]`（按顺序播放，每帧各自停留） | 空 = 降级旧版 blink.png 单图眨眼；帧图在素材根目录 |
+| `probability` | 1 | 每次眨眼机会播放动画序列的概率（0~1） | 未命中保持常态 |
+| `defaultFrameMs` | 150 | 新帧未填时长时的默认显示时长 | 清洗时夹到 30~5000ms |
+
+## `stateImage` / `pet` —— 素材路径覆盖（2026-09-08 新增）
+
+| 参数 | 默认 | 作用 |
+| --- | --- | --- |
+| `stateImage.path` | null | 状态切换图覆盖路径；null = 用内置 `src/assets/state.png` |
+| `pet.path` | null | 宠物主图覆盖路径；null = 依次回退素材根目录 `pet.png` → settings.json 旧值 |
+
+「换图即定制」：应用内不提供换宠交互（原"更换宠物…"入口/选择器 pet 模式/相关 IPC 已移除），
+素材替换走素材根目录 `项目文件夹/data/assets/pet/`（应用内不提供该目录的浏览入口）。
 
 ## 行为开关（托盘勾选，持久化在 settings.json，不走 CFG）
 
@@ -184,4 +217,8 @@
   （rng 注入，权重 10/2/1 的落点断言）——改权重或阈值需同步这些断言；
   `randomReminderDelay` 的区间断言锁在 25~30min。
 - `chat.bubbleDurationMs`：UI 场景 `chat` 断言气泡出现后立即手动关闭，不依赖时长；改小无碍。
+- `menu.items`：UI 场景 `lock` 断言的是**托盘**文本（不走 menu.items）；主菜单项文案改了不影响场景，
+  但增删项必须同步 `main.js popupMainMenu()` 的 template 结构。
+- `blinkAnim.*`：UI 场景 `blinkAnim` 用 `__petTest.setBlinkAnim` 注入帧（不依赖配置文件）；
+  `frames` 非空时渲染层走多帧路径，为空走旧版 blink.png（`blink` 场景锁定）。
 - **新增窗口必须 `spellcheck:false`**：否则 Chromium Windows 拼写检查会在 cwd 产生乱码垃圾目录（复发过一次）。

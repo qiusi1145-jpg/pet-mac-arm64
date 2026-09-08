@@ -19,7 +19,7 @@ const { GestureTracker } = require('../shared/gesture');
 const { springParams, integrateSpring, impulse, breathe } = require('../shared/spring');
 const physics = require('../shared/physics');
 const { chooseSnapTarget, shouldDetach } = require('../shared/snap');
-const { planBlink } = require('../shared/blink');
+const { planBlink, shouldPlayBlinkAnim } = require('../shared/blink');
 const { nextStateVisual } = require('../shared/stateVisual');
 const statusM = require('../shared/status');
 const { clamp } = require('../shared/util');
@@ -30,7 +30,6 @@ const fxEl = $('fx'), ringWrap = $('ringWrap'), ringArc = $('ringArc');
 const pillEl = $('pill');
 const bubbleEl = $('bubble');
 const blinkEl = $('blink');
-const stateEl = $('state');
 const bgEl = $('bg'), regionPanel = $('panel'), panelDims = $('panelDims');
 const hintEl = $('hint');
 const petPickerEl = $('petPicker');
@@ -106,12 +105,18 @@ const app = {
     el: null, playlist: [], index: -1, playing: false, volume: CFG.audio.volumeDefault,
   },
   regionPanelOpen: false,
-  // 应用内图片选择器（更换宠物 / 选背景，绕开这台机器上失灵的原生文件对话框）
+  // 应用内选择器（选背景/选音乐，绕开这台机器上失灵的原生文件对话框）
   petPickerOpen: false,
   bubbleTimer: null,
   blink: { visible: false, timer: null, endTimer: null },
-  stateVisual: { visible: false },
-  petPickerKind: 'pet',   // 'pet' | 'bg'
+  stateVisual: { visible: false },  // 当前形态：false=主形象，true=状态形象
+  mainBody: null,      // 主形象"身体"：解码位图/锚点/尺寸（当前 app.pet 指向活动身体）
+  stateBody: null,     // 状态形象"身体"（预载 src/assets/state.png 或配置覆盖；null = 切换不可用）
+  // ---- 可定制值（来自 app:init 的 dev 块；无开发者模式时 = config.js 默认值） ----
+  greetings: null,                            // 启动问候语列表（覆盖后）
+  blinkAnim: { frames: [], probability: 1 },  // 多帧眨眼动画；frames 空 = 降级旧 blink.png
+  stateImagePath: null,                       // 状态图覆盖（dataUrl）；null = 内置 src/assets/state.png
+  petPickerKind: 'bg',    // 'bg' | 'audio'（换宠已移除）
   petPickerDir: null,
   petPickerCur: null,     // 当前选中的源文件路径
   pkBusy: false,
@@ -175,9 +180,9 @@ function syncHitTest() {
 
 /* ================= 宠物加载 ================= */
 
-async function decodeImageDataUrl(dataUrl, maxDim) {
-  const img = new Image();
-  await new Promise((res, rej) => { img.onload = res; img.onerror = () => rej(new Error('图片解码失败')); img.src = dataUrl; });
+/** 把已加载的 Image 解码成一具"身体"：等比缩放 → 位图分析（透明判定 + 实体像素中心锚点）。
+ *  主形象与状态形象都走这条管线，各自的 bitmap 是该形态像素级判定的唯一来源。 */
+function decodeImageObject(img, maxDim) {
   const { width, height } = scalePlan(img.naturalWidth, img.naturalHeight, maxDim);
   const canvas = document.createElement('canvas');
   canvas.width = width; canvas.height = height;
@@ -187,7 +192,19 @@ async function decodeImageDataUrl(dataUrl, maxDim) {
   const imageData = ctx.getImageData(0, 0, width, height);
   const analysis = analyzeBitmap(imageData, CFG.image.alphaThreshold);
   if (!analysis.hasPixels) throw new Error('图片看起来是全透明的（没有可交互像素）');
-  return { canvas, ctx, w: width, h: height, bitmap: imageData, anchor: analysis.anchor };
+  return { canvas, ctx, w: width, h: height, bitmap: imageData, anchor: analysis.anchor, pos: null };
+}
+
+async function decodeImageDataUrl(dataUrl, maxDim) {
+  const img = new Image();
+  await new Promise((res, rej) => { img.onload = res; img.onerror = () => rej(new Error('图片解码失败')); img.src = dataUrl; });
+  return decodeImageObject(img, maxDim);
+}
+
+async function decodeImageSrc(src, maxDim) {
+  const img = new Image();
+  await new Promise((res, rej) => { img.onload = res; img.onerror = () => rej(new Error('图片解码失败')); img.src = src; });
+  return decodeImageObject(img, maxDim);
 }
 
 function defaultPetPos(w, h) {
@@ -205,30 +222,64 @@ async function loadPet(dataUrl) {
   catch (e) {
     console.error('[pet] 加载失败', e.message);
     hintEl.style.display = 'block';
-    hintEl.textContent = e.message + ' —— 右键托盘 → 更换宠物';
+    hintEl.textContent = e.message + ' —— 请检查素材文件后重启应用';
     return false;
   }
-  petCanvas.width = p.w; petCanvas.height = p.h;
-  p.ctx = petCanvas.getContext('2d');
-  p.ctx.drawImage(p.canvas, 0, 0);
   const old = app.pet && app.pet.pos;
   p.pos = old || defaultPetPos(p.w, p.h);
-  clampPetIntoWorld(p);
+  app.mainBody = p;
   app.pet = p;
-  petWrap.style.width = p.w + 'px';
-  petWrap.style.height = p.h + 'px';
-  blinkEl.src = '../assets/blink.png';
-  stateEl.src = '../assets/state.png';
-  petCanvas.style.transformOrigin = `${p.anchor.x}px ${p.anchor.y}px`;
+  drawBody(p);
+  clampPetIntoWorld(p);
+  blinkEl.src = '../assets/blink.png'; // 旧版单图眨眼（无多帧配置时降级用）
   petCanvas.style.transform = '';
   hintEl.style.display = 'none';
   app.anim.spr = { x: { s: 1, v: 0 }, y: { s: 1, v: 0 } };
-  // 换宠后吸附/抛掷状态复位
+  // 载入主形象 = 回到主形态（换宠后吸附/抛掷状态复位）
+  app.stateVisual.visible = false;
   app.phys = null;
   app.dragging = false;
   app.snap = null; ensureSnapPollStop();
   syncPlacement();
   return true;
+}
+
+/** 把"身体"画到显示画布上：画布尺寸 = 身体尺寸，缩放原点 = 该身体的锚点。 */
+function drawBody(body) {
+  petCanvas.width = body.w;
+  petCanvas.height = body.h;
+  const ctx = petCanvas.getContext('2d');
+  ctx.drawImage(body.canvas, 0, 0);
+  petWrap.style.width = body.w + 'px';
+  petWrap.style.height = body.h + 'px';
+  petCanvas.style.transformOrigin = `${body.anchor.x}px ${body.anchor.y}px`;
+}
+
+/**
+ * 预载状态形象（第二具身体）：内置 src/assets/state.png 或配置覆盖路径（dataUrl 解码）。
+ * 失败 → 状态切换不可用（保持主形态）；只在控制台 warn（不进错误计数）。
+ */
+async function loadStateBody() {
+  try {
+    const body = app.stateImagePath
+      ? await (async () => {
+          const img = await ipcRenderer.invoke('asset:readImage', app.stateImagePath);
+          if (!img) throw new Error('状态图读取失败');
+          return decodeImageDataUrl(img.dataUrl, CFG.image.petMaxDim);
+        })()
+      : await decodeImageSrc('../assets/state.png', CFG.image.petMaxDim);
+    app.stateBody = body;
+    if (app.stateVisual.visible) setStateVisible(true); // 运行中重载（dev:update）：按当前形态换上新身体
+  } catch (e) {
+    app.stateBody = null;
+    if (app.stateVisual.visible && app.mainBody) { // 正显示状态形象但新身体不可用 → 退回主形态
+      app.stateVisual.visible = false;
+      app.pet = app.mainBody;
+      drawBody(app.pet);
+      syncPlacement();
+    }
+    console.warn('[pet] 状态形象加载失败（切换状态将不可用）', e && e.message ? e.message : e);
+  }
 }
 
 function syncPlacement() {
@@ -296,12 +347,31 @@ function setBlinkVisible(v) {
   if (blinkEl) blinkEl.style.display = app.blink.visible ? 'block' : 'none';
 }
 
+/**
+ * 切换形态 = 换一具身体：主形象与状态形象都是完整解码的"身体"（各自位图/锚点/尺寸），
+ * app.pet 指向当前身体 → 像素判定/拖动/抛掷/吸附/呼吸/背景跟随/气泡爱心定位等全部作用于它。
+ * 切换保持"底边中点"位置连续（原地换装；吸附中切换仍挂原窗口顶沿）。
+ * 状态形象未成功加载（stateBody=null）时切换请求无效，维持主形态并回报同步。
+ */
 function setStateVisible(v) {
-  app.stateVisual.visible = !!v;
-  if (stateEl) stateEl.style.display = app.stateVisual.visible ? 'block' : 'none';
-  // 两套形态互斥：显示状态图时原图层整体隐藏（不是叠加），切回时恢复
-  if (petCanvas) petCanvas.style.display = app.stateVisual.visible ? 'none' : '';
-  if (app.stateVisual.visible) setBlinkVisible(false);
+  const want = !!v;
+  if (want && (!app.stateBody || !app.mainBody)) { ipcRenderer.send('state:visualSync', { useState: false }); return; }
+  if (app.stateVisual.visible === want) { ipcRenderer.send('state:visualSync', { useState: app.stateVisual.visible }); return; }
+  const old = app.pet;
+  const next = want ? app.stateBody : app.mainBody;
+  if (old && next && old.pos) {
+    // 底边中点连续：换身体前后"站在原地"
+    const bottom = old.pos.y + old.h;
+    const cx = old.pos.x + old.w / 2;
+    next.pos = { x: Math.round(cx - next.w / 2), y: Math.round(bottom - next.h) };
+  }
+  app.pet = next;
+  app.stateVisual.visible = want;
+  drawBody(next);
+  clampPetIntoWorld(next);
+  petCanvas.style.transform = ''; // 清掉旧身体的缩放形变（弹簧下一帧按新身体重算）
+  if (want) setBlinkVisible(false); // 闭眼图属于主形象：状态形态不眨眼
+  syncPlacement();
   // 回报主进程当前形态（菜单单选项勾选态依据）
   ipcRenderer.send('state:visualSync', { useState: app.stateVisual.visible });
 }
@@ -317,6 +387,13 @@ function scheduleBlink() {
   app.blink.timer = setTimeout(() => {
     // 状态图形态下不眨眼（闭眼图属于主宠物形象），只推进下一次计划
     if (app.stateVisual.visible) { scheduleBlink(); return; }
+    // 多帧动画模式：按整体触发概率掷骰，命中则依次播放帧序列；未命中保持常态。
+    if (app.blinkAnim.frames.length) {
+      if (shouldPlayBlinkAnim(app.blinkAnim.probability)) playBlinkAnimSequence();
+      else scheduleBlink();
+      return;
+    }
+    // 降级：原有单图眨眼（blink.png），时长走随机区间
     setBlinkVisible(true);
     app.blink.endTimer = setTimeout(() => {
       setBlinkVisible(false);
@@ -324,6 +401,30 @@ function scheduleBlink() {
       scheduleBlink();
     }, plan.durationMs);
   }, plan.intervalMs);
+}
+
+/**
+ * 依次播放眨眼动画帧（每帧显示各自的 durationMs，播完恢复常态）。
+ * 每帧开始前重新检查：宠物还在/不在状态图形态/帧列表仍存在 —— 异常即终止并恢复计划。
+ * 动画只动叠加图层（#blink），不影响任何交互判定。
+ */
+function playBlinkAnimSequence() {
+  let i = 0;
+  const step = () => {
+    const frames = app.blinkAnim.frames;
+    if (!app.pet || app.stateVisual.visible || i >= frames.length) {
+      setBlinkVisible(false);
+      app.blink.endTimer = null;
+      scheduleBlink();
+      return;
+    }
+    blinkEl.src = frames[i].src;
+    setBlinkVisible(true);
+    const dur = frames[i].durationMs;
+    i += 1;
+    app.blink.endTimer = setTimeout(step, dur);
+  };
+  step();
 }
 
 function updateRing(dt) {
@@ -579,8 +680,6 @@ window.addEventListener('mouseup', (e) => onMouseUp(e));
 window.addEventListener('mouseleave', () => { app.buttonDown = false; });
 window.addEventListener('blur', () => { app.buttonDown = false; });
 document.addEventListener('contextmenu', (e) => e.preventDefault());
-// 外部（如托盘/菜单）触发
-window.addEventListener('petchange', (e) => { void onPickNewPet(e.detail.path); });
 
 function isOverUiRect(c) {
   for (const r of app.uiRects) if (pointInRect(c.x, c.y, r)) return true;
@@ -615,27 +714,42 @@ function applyRegion(regionScreen) {
   refreshRegionDims();
 }
 
-/** 更换宠物：导入到 userData/assets 并显示；返回是否成功（供应用内选择器判断）。 */
-async function onPickNewPet(p) {
+/**
+ * 应用"可定制值"热更新（开发者模式保存后由主进程推送 dev:update；无开发者模式时无发送方）。
+ * 覆盖字段结构同 app:init 的 dev 块；pet 路径变化需重启（loadPet 在启动时解析）。
+ */
+async function applyDevUpdate(patch) {
+  if (!patch || typeof patch !== 'object') return;
   try {
-    const stored = await ipcRenderer.invoke('asset:importPet', p);
-    const src = stored || p;
-    const img = await ipcRenderer.invoke('asset:readImage', src);
-    if (!img) { console.error('[pet] 读取失败', p); return false; }
-    const ok = await loadPet(img.dataUrl);
-    if (ok) ipcRenderer.send('settings:save', { pet: { path: stored } });
-    return !!ok;
-  } catch (e) { console.error('[pet] 换宠失败', e && e.message ? e.message : e); return false; }
+    if (Array.isArray(patch.greetings) && patch.greetings.length) app.greetings = patch.greetings;
+    if (patch.blinkAnim && typeof patch.blinkAnim === 'object') {
+      const frames = [];
+      for (const f of patch.blinkAnim.frames || []) {
+        if (!f || !f.path) continue;
+        const img = await ipcRenderer.invoke('asset:readImage', f.path);
+        if (img) frames.push({ src: img.dataUrl, durationMs: clamp(Number(f.durationMs) || 150, 30, 5000) });
+      }
+      app.blinkAnim.frames = frames;
+      const prob = Number(patch.blinkAnim.probability);
+      app.blinkAnim.probability = Number.isFinite(prob) ? clamp(prob, 0, 1) : 1;
+      setBlinkVisible(false); // 播放中改配置：终止当前帧序列（step 下一拍会发现列表已换/为空）
+    }
+    if ('stateImagePath' in patch) {
+      app.stateImagePath = patch.stateImagePath || null;
+      void loadStateBody(); // 重新解码状态身体（dev:update 当前无发送方，保留兼容）
+    }
+  } catch (e) { console.error('[dev] 应用可定制值失败', e && e.message ? e.message : e); }
 }
 
 function bindIpc() {
   ipcRenderer.on('cursor:pos', (e, p) => { app.cursor = p; app.cursorKnown = true; });
   ipcRenderer.on('lock:change', (_e, { locked }) => { app.locked = locked; app.ignoreSent = null; syncHitTest(); });
   ipcRenderer.on('app:visibility', (_e, { visible }) => onVisibility(visible));
-  ipcRenderer.on('pet:newFile', (_e, { path: p }) => { void onPickNewPet(p); });
   ipcRenderer.on('region:changed', (_e, { regionScreen }) => applyRegion(regionScreen));
   ipcRenderer.on('ui:openRegionEditor', () => openRegionEditor());
   ipcRenderer.on('ui:openPicker', (_e, { kind }) => openPetPicker(kind));
+  // 可定制值热更新（开发者模式保存后推送；平时无发送方）
+  ipcRenderer.on('dev:update', (_e, patch) => { void applyDevUpdate(patch); });
   ipcRenderer.on('state:visual', (_e, { useState }) => setStateVisible(!!useState));
   // ---- 气泡类：启动问候之外的待办提醒 / 随机催促 / 聊天回复 ----
   ipcRenderer.on('bubble:todo', (_e, { text, ms }) => showBubble(text, ms));
@@ -1081,7 +1195,7 @@ function renderPickerFiles(files) {
     d.className = 'pk-empty';
     d.textContent = app.petPickerKind === 'audio'
       ? '这个文件夹里没有音乐（MP3 / WAV / OGG / FLAC / M4A / AAC）'
-      : '这个文件夹里没有图片（PNG / JPG / WebP / GIF / BMP）';
+      : '这个文件夹里没有图片（PNG）';
     pkList.appendChild(d);
     return;
   }
@@ -1156,12 +1270,9 @@ async function applyPicker() {
       const dest = await ipcRenderer.invoke('asset:importBg', p);
       if (dest) { setBgPath(dest); closePetPicker(); }
       else pkSetErr('背景设置失败，请换一张试试');
-    } else if (kind === 'audio') {
-      await addPickedAudio(p);
     } else {
-      const ok = await onPickNewPet(p);
-      if (ok) closePetPicker();
-      else { pkSetErr('这张不能用作宠物（可能损坏，或是全透明没有可交互像素），请换一张'); pkUse.disabled = !app.petPickerCur; }
+      // kind === 'audio'
+      await addPickedAudio(p);
     }
   } catch (e) {
     pkSetErr('失败：' + (e && e.message ? e.message : e));
@@ -1173,19 +1284,21 @@ async function applyPicker() {
 }
 
 function openPetPicker(kind, initialDir) {
-  const kindVal = kind === 'bg' ? 'bg' : kind === 'audio' ? 'audio' : 'pet';
+  const kindVal = kind === 'audio' ? 'audio' : 'bg'; // 换宠已移除：只余 背景/音乐
   const isBg = kindVal === 'bg', isAudio = kindVal === 'audio';
   app.petPickerKind = kindVal;
   if (app.regionPanelOpen) closeRegionEditor();
-  pkTitle.textContent = isAudio ? '添加音乐' : isBg ? '选择背景图片' : '更换宠物';
+  pkTitle.textContent = isAudio ? '添加音乐' : '选择背景图片';
   pkHint.textContent = isAudio
     ? '（MP3 / WAV / OGG / FLAC / M4A / AAC）'
-    : isBg
-      ? '（仅 PNG，铺在桌宠后面的图，高度自动按人物缩放）'
-      : '（仅 PNG，推荐透明背景）';
-  pkUse.textContent = isAudio ? '把这首加入播放列表' : isBg ? '把这张设为背景' : '把这张设为宠物';
+    : '（仅 PNG，铺在桌宠后面的图，高度自动按人物缩放）';
+  pkUse.textContent = isAudio ? '把这首加入播放列表' : '把这张设为背景';
   app.petPickerOpen = true;
   petPickerEl.style.display = 'flex';
+  // 选择器里有路径输入框（Esc 关闭也要键盘）→ 临时恢复窗口可激活；关闭时还原。
+  // 平时不可激活（focusable:false）是为了点击宠物不抢前台，避免其它窗口的动画被
+  // Chromium 遮挡检测冻结（见 main.js createWindow 注释）。
+  ipcRenderer.send('win:setFocusable', true);
   app.petPickerCur = null;
   pkUse.disabled = true;
   pkSetErr('');
@@ -1210,12 +1323,13 @@ function openPetPicker(kind, initialDir) {
 function closePetPicker() {
   if (!app.petPickerOpen) return;
   app.petPickerOpen = false;
-  app.petPickerKind = 'pet';
+  app.petPickerKind = 'bg';
   app.petPickerCur = null;
   pkUse.disabled = true;
   petPickerEl.style.display = 'none';
   clearPkPreview();
   updateUiRects();
+  ipcRenderer.send('win:setFocusable', false); // 键盘浮层关闭 → 恢复“不可激活”
   syncHitTest();
 }
 
@@ -1330,8 +1444,10 @@ function testState() {
     derived: v,
     greetings: CFG.greeting.greetings || [],
     bubbleVisible: !!(bubbleEl && bubbleEl.classList.contains('show')),
+    blinkAnim: { frames: app.blinkAnim.frames.length, probability: app.blinkAnim.probability },
     stateVisualVisible: app.stateVisual.visible,
-    petCanvasHidden: petCanvas.style.display === 'none',
+    stateBodyReady: !!app.stateBody,
+    bodyKind: app.pet === app.stateBody ? 'state' : 'main', // 当前活动身体
     pillText: pillEl.querySelector('.txt').textContent,
     petOpacity: p ? petWrap.style.opacity : null,
     bgOn: !!app.bgOn,
@@ -1349,6 +1465,31 @@ function testState() {
       volume: app.audio.volume,
     },
   };
+}
+
+/** 启动时应用"可定制值"（app:init 的 dev 块）→ 填 app.greetings / app.blinkAnim / app.stateImagePath。
+ *  无开发者模式（也无固化文件）时字段值 = config.js 默认 → 行为与旧版完全一致。 */
+async function applyDevInit(dev) {
+  const d = dev && typeof dev === 'object' ? dev : {};
+  if (Array.isArray(d.greetings) && d.greetings.length) app.greetings = d.greetings;
+  app.blinkAnim = { frames: [], probability: 1 };
+  if (d.blinkAnim && Array.isArray(d.blinkAnim.frames)) {
+    const frames = [];
+    for (const f of d.blinkAnim.frames) {
+      if (!f || !f.path) continue;
+      const img = await ipcRenderer.invoke('asset:readImage', f.path);
+      if (img) frames.push({ src: img.dataUrl, durationMs: clamp(Number(f.durationMs) || 150, 30, 5000) });
+    }
+    if (frames.length) {
+      app.blinkAnim.frames = frames;
+      const prob = Number(d.blinkAnim.probability);
+      app.blinkAnim.probability = Number.isFinite(prob) ? clamp(prob, 0, 1) : 1;
+    }
+  }
+  if (d.stateImagePath) {
+    const img = await ipcRenderer.invoke('asset:readImage', d.stateImagePath);
+    if (img) app.stateImagePath = img.dataUrl;
+  }
 }
 
 async function init() {
@@ -1372,15 +1513,19 @@ async function init() {
   app.physicsEnabled = !(initInfo.settings && initInfo.settings.physicsEnabled === false);
   phase4Init(initInfo.settings, initInfo.workArea);
   updateUiRects();
+  await applyDevInit(initInfo.dev); // 可定制值要在 loadPet/loadStateBody（状态身体路径）/scheduleBlink 之前就位
 
-  const petPath = initInfo.settings && initInfo.settings.pet && initInfo.settings.pet.path;
+  // 宠物主图路径由主进程统一解析（开发者配置覆盖 > 素材根目录 pet.png > settings 旧值 > 内置占位图）
+  const petPath = initInfo.petPath;
   if (petPath) {
     const img = await ipcRenderer.invoke('asset:readImage', petPath);
     if (img) await loadPet(img.dataUrl);
-    else hintEl.style.display = 'block';
+    // 占位图也照常显示，但保留提示条引导自定义（loadPet 会先隐藏提示条，这里再打开）
+    if (!img || initInfo.petIsPlaceholder) hintEl.style.display = 'block';
   } else {
     hintEl.style.display = 'block';
   }
+  void loadStateBody(); // 预载状态形象（第二具身体）；失败只是切换状态不可用，不影响主形象
   refreshPill();
 
   app.ready = true;
@@ -1388,7 +1533,7 @@ async function init() {
   window.__pet = app;
   scheduleBlink();
   setTimeout(() => {
-    const list = CFG.greeting.greetings || [];
+    const list = app.greetings || CFG.greeting.greetings || [];
     if (list.length) showBubble(list[Math.floor(Math.random() * list.length)], CFG.greeting.durationMs);
   }, CFG.greeting.delayMs);
   if (app.testMode) {
@@ -1404,6 +1549,18 @@ async function init() {
       toggleLock() { toggleLock(); },
       heart(level = 1) { const p = app.pet; if (p) spawnHeart(p.pos.x + p.anchor.x, p.pos.y + 10, level); },
       forceBlink(visible) { setBlinkVisible(!!visible); },
+      // 多帧眨眼动画驱动（测试/调试）：frames=[{src:dataUrl,durationMs}]，probability 0~1
+      setBlinkAnim(frames, probability) {
+        app.blinkAnim.frames = (Array.isArray(frames) ? frames : [])
+          .filter((f) => f && f.src)
+          .map((f) => ({ src: f.src, durationMs: clamp(Number(f.durationMs) || 150, 30, 5000) }));
+        app.blinkAnim.probability = clamp(Number(probability == null ? 1 : probability), 0, 1);
+      },
+      playBlinkAnim() {
+        if (!app.blinkAnim.frames.length || !app.pet) return false;
+        playBlinkAnimSequence();
+        return true;
+      },
       toggleStateVisual: () => toggleStateVisual(),
       showBubble: (text, ms) => showBubble(text, ms),
       hideBubble: () => hideBubble(),
@@ -1428,7 +1585,7 @@ async function init() {
       openRegionPanel: () => openRegionEditor(),
       closeRegionPanel: () => closeRegionEditor(),
       // 应用内选择器测试钩子：openPicker(kind, dir?)（dir 指定起始文件夹，使场景确定性）
-      openPicker: (kind, dir) => openPetPicker(kind || 'pet', dir),
+      openPicker: (kind, dir) => openPetPicker(kind || 'bg', dir),
       closePicker: () => closePetPicker(),
       pickerFiles: () => ({ dir: app.petPickerDir, names: Array.from(pkList.querySelectorAll('.pk-item')).map((el) => el.textContent) }),
       statusPersist() { persistStatus(true); },

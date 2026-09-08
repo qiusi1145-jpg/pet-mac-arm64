@@ -27,8 +27,7 @@
     #petWrap canvas { display: block; }
     #blink { position: absolute; inset: 0; width: 100%; height: 100%; display: none;
       pointer-events: none; }
-    #state { position: absolute; inset: 0; width: 100%; height: 100%; display: none;
-      pointer-events: none; }
+    /* 状态形象不再用独立图层：与主形象共用 #pet 画布（切换=重画另一具身体，判定随身体走） */
     /* 特效/爱心层 */
     #fx { position: absolute; inset: 0; z-index: 3; pointer-events: none; overflow: visible; }
     /* 交互 UI 层（状态胶囊 / 菜单 / 弹层） */
@@ -124,7 +123,7 @@
 <body>
   <div id="world">
     <img id="bg" alt="" draggable="false" />
-    <div id="petWrap"><canvas id="pet"></canvas><img id="blink" alt="" draggable="false" /><img id="state" alt="" draggable="false" /></div>
+    <div id="petWrap"><canvas id="pet"></canvas><img id="blink" alt="" draggable="false" /></div>
     <div id="fx"></div>
     <div id="ui">
       <div id="pill" class="interactive" title="点击折叠/展开状态"><span class="dot">●</span><span class="txt"></span></div>
@@ -138,7 +137,7 @@
       </div>
       <div id="petPicker" class="interactive">
         <div class="pk-head">
-          <span class="pk-title" id="pkTitle">更换宠物</span>
+          <span class="pk-title" id="pkTitle">选择背景图片</span>
           <span class="pk-hint" id="pkHint"></span>
           <button class="pk-close" data-pk="close" title="关闭 (Esc)">✕</button>
         </div>
@@ -153,12 +152,12 @@
         <div class="pk-err" id="pkErr"></div>
         <div class="pk-foot">
           <button data-pk="refresh">刷新</button>
-          <button id="pkUse" data-pk="use" class="primary">把这张设为宠物</button>
+          <button id="pkUse" data-pk="use" class="primary">把这张设为背景</button>
         </div>
       </div>
     </div>
     <div id="ringWrap"><svg width="68" height="68"><circle cx="34" cy="34" r="30" fill="none" stroke="rgba(0,0,0,.18)" stroke-width="4"/><circle id="ringArc" cx="34" cy="34" r="30" fill="none" stroke="var(--ringColor)" stroke-width="4" stroke-linecap="round" stroke-dasharray="188.5" stroke-dashoffset="188.5"/></svg></div>
-    <div id="hint">还没有宠物：右键托盘图标 → 更换宠物，上传一张 PNG</div>
+    <div id="hint">当前是占位宠物：把你的 pet.png 放入 data\assets\pet\ 后重启即可替换</div>
   </div>
   <script src="./boot.js"></script>
 </body>

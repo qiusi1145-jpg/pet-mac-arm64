@@ -1,16 +1,16 @@
 # 测试说明（分层）
 
-自动化分三层，全部在当前仓库一键可跑。**红色约束（见 PRD / README）尽量下沉到 `src/shared` 纯函数层**，
+自动化分三层，全部在当前仓库一键可跑。**红色约束（见 README / 正在运行的功能说明.md）尽量下沉到 `src/shared` 纯函数层**，
 用单测直接锁死；渲染层交互用「真实启动 Electron + 注入驱动」验证端到端行为。
 
 ```bash
-npm test            # L1 纯函数单测（82 个 / 13 个文件）
+npm test            # L1 纯函数单测（88 个 / 14 个文件）
 npm run test:smoke  # L2 真实启动冒烟
-npm run test:ui     # L3 渲染层场景（18 个）
+npm run test:ui     # L3 渲染层场景（19 个）
 PET_UI_ONLY='bg,audio' npm run test:ui  # 调试：只跑指定场景
 ```
 
-> 注：PRD 允许 UI 自动化降级。本项目 UI 层没有引入 Playwright，而是用
+> 注：本项目 UI 层没有引入 Playwright（早期规格允许 UI 自动化降级），而是用
 > Electron 自身能力（`webContents.executeJavaScript` + 测试模式下暴露的 `window.__petState`/`__petTest`
 > + `PET_SCENARIO` 场景名），效果等价但零额外依赖。
 
@@ -27,8 +27,9 @@ PET_UI_ONLY='bg,audio' npm run test:ui  # 调试：只跑指定场景
 | `test/unit/region.test.js` | 工作区减任务栏、可缩放、底对齐+水平居中、夹取最小 | 活动区域语义 |
 | `test/unit/settings.test.js` | 默认值/规范化（含 snapEnabled / physicsEnabled 默认开、可显式关） | 持久化字段收敛 |
 | `test/unit/store.test.js` | JSON 读写、updateDeep、防抖、损坏回退 | 持久化安全 |
-| `test/unit/blink.test.js` | 眨眼计划落在配置区间、rng 可复现 | 眨眼参数集中可调 |
+| `test/unit/blink.test.js` | 眨眼计划落在配置区间、rng 可复现；**多帧动画清洗**（非法帧丢弃/时长夹取/缺省回退）与**触发概率**（0 永不/1 必播/中间掷骰） | 眨眼参数集中可调 |
 | `test/unit/stateVisual.test.js` | 状态图显隐取反 | 切换状态只改视觉 |
+| `test/unit/overrides.test.js` | 覆盖表默认空/点分路径命中（false/null/空串也算命中）/清空；config 新增可定制字段默认值 | 无覆盖时 = 纯默认行为 |
 | `test/unit/todo.test.js` | 待办清洗/到期判断（未完成+到期、按序）/催促目标加权选择（≤10min ×10、≤1h ×2、无 ♥ 返回 null）/模板替换/催促间隔区间/normalizeSettings 清洗 todos | 待办与催促选择规则 |
 | `test/unit/chat.test.js` | 规则清洗/忽略大小写包含匹配/多命中取最长/无命中 null/normalizeSettings 清洗 chatRules | 聊天匹配规则 |
 
@@ -39,11 +40,14 @@ PET_UI_ONLY='bg,audio' npm run test:ui  # 调试：只跑指定场景
 
 ## L3 渲染层场景（真实 Electron + 注入驱动）
 
-`test/ui/ui.test.js` 顺序跑 **18 个场景**（每个独立进程 / 独立临时 userData；调试时用 `PET_UI_ONLY='bg,audio'` 只跑指定场景）：
+`test/ui/ui.test.js` 顺序跑 **19 个场景**（每个独立进程 / 独立临时 userData；调试时用 `PET_UI_ONLY='bg,audio'` 只跑指定场景）：
 
 - **greeting**：启动后问候气泡自动出现，文本 ∈ `config.greeting.greetings`。
 - **blink**：`forceBlink` 驱动闭眼图显隐；显隐前后宠物实体像素命中不变（判定不被视觉层影响）。
-- **stateVisual**：toggle 状态图显隐；显隐前后命中不变、状态数值（mood/energy/satiety/affinity）不变。
+- **blinkAnim**（多帧眨眼动画）：注入两帧（页面现画 canvas dataUrl，各 120ms）→ 强制播放 →
+  第一帧显示、帧间 src 切换、播完恢复常态。
+- **stateVisual**：toggle 换身体（主形象 ↔ 状态形象）：`bodyKind` 随切换翻转、底边中点位置连续（原地换装）、
+  两种形态各自在锚点附近可命中（判定随当前身体走）、状态形态眨眼被抑制、状态数值全程不变。
 - **lock**（锁定并保持始终置于顶层）：初始 floating → 长按切换路径锁屏后主进程 `lockLevel='screen-saver'`、
   托盘出现「解锁（保底入口）」、实体像素上也整窗穿透 → 解锁恢复 floating、托盘显示
   「锁定并保持始终置于顶层」、实体像素恢复可交互。
@@ -62,8 +66,9 @@ PET_UI_ONLY='bg,audio' npm run test:ui  # 调试：只跑指定场景
   三值归零宠物透明度 0.45 → 任一恢复透明度回 1 → 区域面板打开后其矩形参与命中判定（指针在面板内不穿透）。
 - **passthrough**（红线1/5 不反转回归）：注入“内容坐标”光标，在同一段同步 JS 里 set+read——
   光标落在宠物实体像素 → 窗口不穿透（`ignore=false`）；落在空白（无宠无 UI）→ 点击穿透（`ignore=true`）。
-- **picker**（应用内换宠，绕开系统对话框）：选择器打开 → 列到 fixture 图片 → 面板参与命中判定 →
-  选中 `pet-96.png` → “把这张设为宠物” → 走真实导入/解码/替换 → 面板自动关闭。
+- **picker**（应用内选择器，背景模式——换宠已移除、宠物素材走素材根目录）：选择器打开 →
+  列到 fixture 图片 → 面板参与命中判定 → 选中 `bg-160x64.png` → "把这张设为背景" →
+  走真实导入/设置路径 → 面板自动关闭、背景生效。
 - **bg**（bug1/bug2 背景）：设背景后高=人物高×4/3、宽按原图等比、底边贴地面、中心对人物脚底中点 →
   人物贴地横移背景跟随 → 人物悬空时背景垂直/水平都冻结 → 落地重新对齐 → 清除背景立即消失 → 再开又能显示并对齐。
 - **menuClean**（bug5 右键菜单不吸人）：制造“长按右键按住残留态” → 执行弹菜单/关菜单时的清理逻辑 →
@@ -86,7 +91,7 @@ PET_UI_ONLY='bg,audio' npm run test:ui  # 调试：只跑指定场景
 
 | 红线 | 自动化层 |
 | --- | --- |
-| 点击判定恒用原图像素；动画不改判定 | L1 pixel/spring + L3 anim（drawnSy 采样）+ L3 blink/stateVisual（视觉层显隐不改变命中） |
+| 点击判定恒用当前身体（主/状态形象各自的）原始像素；动画不改判定 | L1 pixel/spring + L3 anim（drawnSy 采样）+ L3 stateVisual（换身体后仍可命中） |
 | 锁定=最高置顶级+整窗穿透、托盘是保底解锁 | L1 gesture（长按产出锁动作）+ L3 lock（screen-saver 级别/托盘文本/穿透语义） |
 | 物理只属于抛掷/失支撑；普通拖动 1:1 | L1 gesture(拖动) + L1 physics + L3 dragPhysics |
 | 吸附锚=实体中心；弹跳不越界 | L1 snap/pixel/physics + L3 snap |
@@ -101,11 +106,13 @@ PET_UI_ONLY='bg,audio' npm run test:ui  # 调试：只跑指定场景
 | 待办增删改查/持久化/到期气泡/可点击关闭 | L1 todo（清洗/到期/模板）+ L3 todo 场景 |
 | 随机催促：紧迫度加权选择、锁定不生效 | L1 todo（pickReminderTodo/间隔区间）+ L3 reminder 场景 |
 | 聊天：忽略大小写包含匹配、最长优先、未命中 Q 弹 | L1 chat（matchChatRule）+ L3 chat 场景（真实双窗口） |
+| 多帧眨眼动画按序播放、播完恢复常态 | L1 blink（帧清洗/概率）+ L3 blinkAnim 场景 |
+| 无覆盖时 = 纯默认行为（覆盖表恒为空） | L1 overrides |
 | 隐藏暂停 & 离线结算 | 代码路径（onVisibility）由冒烟+L1 状态结算覆盖，端到端列 MANUAL |
 
 ## 覆盖缺口（诚实的已知边界）
 
-- **原生主菜单 / 托盘菜单的弹出手感、真实鼠标下的穿透“顺滑切换”**无法在无头自动化里断言 → MANUAL_CHECKLIST 中列为高优先手动项。
+- **原生主菜单 / 托盘菜单的弹出手感、真实鼠标下的穿透"顺滑切换"**无法在无头自动化里断言 → MANUAL_CHECKLIST 中列为高优先手动项。
   `menuClean` 场景只验证了“菜单弹出/关闭后的手势清理逻辑”，并未真的弹一次原生菜单（自动化弹会卡住等用户选）。
   托盘/主菜单的**文本与结构**由 L3 lock（`_trayMenuItems` 断言）与 L3 todo/reminder/chat（走真实菜单动作路径）间接覆盖。
 - **音频“真实出声”与自动下一首**：`audio` 场景用一段静音 WAV 验证了“能解码并进入播放态”，但扬声器真出声、
