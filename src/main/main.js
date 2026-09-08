@@ -403,6 +403,7 @@ class PetApp {
           if (self.win && !self.win.isDestroyed()) setTimeout(() => self.popupMainMenu(), 80);
         },
       },
+      { label: '更换宠物…', click: () => this.openPicker('pet') },
       { label: '活动区域设置…', click: () => { this.showIfHidden(); if (self.win && !self.win.isDestroyed()) self.win.webContents.send('ui:openRegionEditor'); } },
       { type: 'separator' },
       { label: '退出', click: () => self.quit() },
@@ -458,6 +459,7 @@ class PetApp {
       },
       { label: '切换状态', click: () => self.send('state:toggle') },
       { label: '重置状态', click: () => self.act('resetStatus') },
+      { label: '更换宠物…', click: () => self.openPicker('pet') },
       { type: 'separator' },
       { label: '退出', click: () => self.quit() },
     ];
