@@ -71,85 +71,81 @@ const scenarios = {
     return assertMap(results);
   },
 
-// [REMOVED] UI 场景 dragPhysics（对应功能已移除） 开始
-//   /** 抛掷物理：注入速度→宠物真实飞动并最终落地回待机。 */
-//   async dragPhysics(ctx) {
-//     const { js, sleep } = ctx;
-//     await waitFor(js, 'window.__petReady && window.__petState().petLoaded', 12000, 'renderer ready + pet');
-//     const results = [];
-//
-//     const pre = await js('window.__petState().pet.y');
-//     await js('window.__petTest.forcePhys(700, -800)');
-//     await sleep(250);
-//     const phys1 = await js('window.__petState().physActive');
-//     const midY = await js('window.__petState().pet.y');
-//     results.push({ name: `抛掷后物理激活(phys=${phys1})`, ok: phys1 === true });
-//     results.push({ name: '抛掷确实改变了位置', ok: Math.abs(midY - pre) > 2 });
-//
-    // 等它落地回待机（最多 9s），最终静止在地面
-//     try {
-//       await waitFor(js, 'window.__petState().physActive === false', 9000, '物理结束');
-//     } catch (e) {
-//       const dbg = await js(`(() => { const s = window.__petState(); return { phys: s.phys, pet: s.pet, world: s.world, pre: ${JSON.stringify(pre)} }; })()`);
-//       console.error(`[scenario] dragPhysics 超时，最后状态: ${JSON.stringify(dbg)}`);
-//       throw e;
-//     }
-//     const st = await js('window.__petState()');
-//     const floorY = st.world.h - st.pet.h;
-//     results.push({
-//       name: `落地回待机且在地面(y=${st.pet.y.toFixed(0)}≈${Math.round(floorY)})`,
-//       ok: Math.abs(st.pet.y - floorY) < 3,
-//     });
-//     return assertMap(results);
-//   },
-// [REMOVED] UI 场景 dragPhysics（对应功能已移除） 结束
+  /** 抛掷物理：注入速度→宠物真实飞动并最终落地回待机。 */
+  async dragPhysics(ctx) {
+    const { js, sleep } = ctx;
+    await waitFor(js, 'window.__petReady && window.__petState().petLoaded', 12000, 'renderer ready + pet');
+    const results = [];
 
-// [REMOVED] UI 场景 snap（对应功能已移除） 开始
-//   /** 窗口吸附：低速释放靠近某窗口顶沿 → 挂到该顶沿；窗口消失 → 失去支撑坠落。 */
-//   async snap(ctx) {
-//     const { js, sleep } = ctx;
-//     await waitFor(js, 'window.__petReady && window.__petState().petLoaded', 12000, 'renderer ready + pet');
-//     const results = [];
-//
-//     const st0 = await js('window.__petState()');
-//     const anchor = st0.pet.anchor;      // 实体像素中心（内容坐标）
-//     const petH = st0.pet.h;
-//     const winTop = 260;                 // 假窗口顶沿（屏幕坐标，region 在 0,0）
+    const pre = await js('window.__petState().pet.y');
+    await js('window.__petTest.forcePhys(700, -800)');
+    await sleep(250);
+    const phys1 = await js('window.__petState().physActive');
+    const midY = await js('window.__petState().pet.y');
+    results.push({ name: `抛掷后物理激活(phys=${phys1})`, ok: phys1 === true });
+    results.push({ name: '抛掷确实改变了位置', ok: Math.abs(midY - pre) > 2 });
+
+    // 等它落地回待机（最多 9s），最终静止在地面
+    try {
+      await waitFor(js, 'window.__petState().physActive === false', 9000, '物理结束');
+    } catch (e) {
+      const dbg = await js(`(() => { const s = window.__petState(); return { phys: s.phys, pet: s.pet, world: s.world, pre: ${JSON.stringify(pre)} }; })()`);
+      console.error(`[scenario] dragPhysics 超时，最后状态: ${JSON.stringify(dbg)}`);
+      throw e;
+    }
+    const st = await js('window.__petState()');
+    const floorY = st.world.h - st.pet.h;
+    results.push({
+      name: `落地回待机且在地面(y=${st.pet.y.toFixed(0)}≈${Math.round(floorY)})`,
+      ok: Math.abs(st.pet.y - floorY) < 3,
+    });
+    return assertMap(results);
+  },
+
+  /** 窗口吸附：低速释放靠近某窗口顶沿 → 挂到该顶沿；窗口消失 → 失去支撑坠落。 */
+  async snap(ctx) {
+    const { js, sleep } = ctx;
+    await waitFor(js, 'window.__petReady && window.__petState().petLoaded', 12000, 'renderer ready + pet');
+    const results = [];
+
+    const st0 = await js('window.__petState()');
+    const anchor = st0.pet.anchor;      // 实体像素中心（内容坐标）
+    const petH = st0.pet.h;
+    const winTop = 260;                 // 假窗口顶沿（屏幕坐标，region 在 0,0）
     // 摆好宠物：让锚点恰落在窗口顶沿附近
-//     const placeY = winTop - anchor.y - 8;
-//     await js(`window.__petTest.placePet(${st0.pet.x}, ${placeY})`);
-//     await js(`window.__petTest.setSnapWindows([{ id:'fake-win', cls:'Notepad', title:'test', left:0, top:${winTop}, right:${st0.world.w}, bottom:900, minimized:false }])`);
-//
-//     const snapped = await js('window.__petTest.trySnap()');
-//     results.push({ name: '低速靠近窗口顶沿 → 吸附成功', ok: snapped === true });
-//     const info = await js('window.__petTest.snapInfo()');
-//     results.push({ name: '吸附记录窗口句柄', ok: !!info && info.handle === 'fake-win' });
+    const placeY = winTop - anchor.y - 8;
+    await js(`window.__petTest.placePet(${st0.pet.x}, ${placeY})`);
+    await js(`window.__petTest.setSnapWindows([{ id:'fake-win', cls:'Notepad', title:'test', left:0, top:${winTop}, right:${st0.world.w}, bottom:900, minimized:false }])`);
+
+    const snapped = await js('window.__petTest.trySnap()');
+    results.push({ name: '低速靠近窗口顶沿 → 吸附成功', ok: snapped === true });
+    const info = await js('window.__petTest.snapInfo()');
+    results.push({ name: '吸附记录窗口句柄', ok: !!info && info.handle === 'fake-win' });
     // 底边贴窗口顶：pet.y(内容) = (top - originY) - petH = winTop - petH
-//     const st = await js('window.__petState()');
-//     results.push({
-//       name: `吸附后底边贴窗口顶(y=${st.pet.y.toFixed(0)}≈${winTop - petH})`,
-//       ok: Math.abs(st.pet.y - (winTop - petH)) < 1,
-//     });
-//
+    const st = await js('window.__petState()');
+    results.push({
+      name: `吸附后底边贴窗口顶(y=${st.pet.y.toFixed(0)}≈${winTop - petH})`,
+      ok: Math.abs(st.pet.y - (winTop - petH)) < 1,
+    });
+
     // 窗口仍在 → 不脱落
-//     await js('window.__petTest.pollSnap()');
-//     await sleep(30);
-//     const still = await js('window.__petTest.snapInfo()');
-//     results.push({ name: '窗口未移动/关闭 → 保持吸附', ok: !!still });
-//
+    await js('window.__petTest.pollSnap()');
+    await sleep(30);
+    const still = await js('window.__petTest.snapInfo()');
+    results.push({ name: '窗口未移动/关闭 → 保持吸附', ok: !!still });
+
     // 窗口消失 → 失去支撑坠落（物理接管）
-//     await js('window.__petTest.setSnapWindows([])');
-//     await js('window.__petTest.pollSnap()');
-//     await sleep(40);
-//     const st2 = await js('window.__petState()');
-//     results.push({ name: `窗口消失 → 解除吸附并坠落(phys=${st2.physActive})`, ok: st2.physActive === true && !st2.snap });
-//
-//     await js('window.__petTest.setSnapWindows(null)');
+    await js('window.__petTest.setSnapWindows([])');
+    await js('window.__petTest.pollSnap()');
+    await sleep(40);
+    const st2 = await js('window.__petState()');
+    results.push({ name: `窗口消失 → 解除吸附并坠落(phys=${st2.physActive})`, ok: st2.physActive === true && !st2.snap });
+
+    await js('window.__petTest.setSnapWindows(null)');
     // 等落地回待机（不要残留物理/吸附干扰后续）
-//     await waitFor(js, 'window.__petState().physActive === false', 8000, '落地静止');
-//     return assertMap(results);
-//   },
-// [REMOVED] UI 场景 snap（对应功能已移除） 结束
+    await waitFor(js, 'window.__petState().physActive === false', 8000, '落地静止');
+    return assertMap(results);
+  },
 
   /** 状态系统 + 区域面板：喂食涨饱食、互动涨情绪、归零半透明、面板参与命中判定。 */
   async status(ctx) {
@@ -451,76 +447,74 @@ const scenarios = {
     return assertMap(results);
   },
 
-// [REMOVED] UI 场景 physOff（对应功能已移除） 开始
-//   /**
-//    * 物理模拟开关（新功能）：关闭后释放/甩动都不再启动物理，人物停在原地不下坠；
-//    * 但“低速贴近窗口顶沿 → 吸附”仍工作（吸附独立于物理开关）；已吸附窗口消失时也不坠落。
-//    */
-//   async physOff(ctx) {
-//     const { js, sleep } = ctx;
-//     await waitFor(js, 'window.__petReady && window.__petState().petLoaded', 12000, 'renderer ready + pet');
-//     const results = [];
-//
+  /**
+   * 物理模拟开关（新功能）：关闭后释放/甩动都不再启动物理，人物停在原地不下坠；
+   * 但“低速贴近窗口顶沿 → 吸附”仍工作（吸附独立于物理开关）；已吸附窗口消失时也不坠落。
+   */
+  async physOff(ctx) {
+    const { js, sleep } = ctx;
+    await waitFor(js, 'window.__petReady && window.__petState().petLoaded', 12000, 'renderer ready + pet');
+    const results = [];
+
     // 关掉物理；先注入“没有窗口”，避免吸附误触影响“停原地”的断言
-//     await js('window.__petTest.setPhysicsEnabled(false)');
-//     await js('window.__petTest.setSnapWindows([])');
-//     let st = await js('window.__petState()');
-//     results.push({ name: '物理开关已关闭(physicsEnabled=false)', ok: st.physicsEnabled === false });
-//
-//     const groundY = st.world.h - st.pet.h;
-//     const x0 = Math.max(0, Math.round(st.world.w / 2 - st.pet.w / 2));
-//     const airY = groundY - 240;
-//
+    await js('window.__petTest.setPhysicsEnabled(false)');
+    await js('window.__petTest.setSnapWindows([])');
+    let st = await js('window.__petState()');
+    results.push({ name: '物理开关已关闭(physicsEnabled=false)', ok: st.physicsEnabled === false });
+
+    const groundY = st.world.h - st.pet.h;
+    const x0 = Math.max(0, Math.round(st.world.w / 2 - st.pet.w / 2));
+    const airY = groundY - 240;
+
     // ① 低速空中释放 → 不坠落，悬在原地
-//     await js(`window.__petTest.placePet(${x0}, ${airY})`);
-//     await js('window.__petTest.releaseRel(0, 0, 50)');
-//     await sleep(400);
-//     st = await js('window.__petState()');
-//     results.push({
-//       name: `物理关·低速空中释放不坠落(y=${st.pet.y.toFixed(0)}≈${airY}, phys=${st.physActive})`,
-//       ok: st.physActive === false && Math.abs(st.pet.y - airY) < 0.5,
-//     });
-//
+    await js(`window.__petTest.placePet(${x0}, ${airY})`);
+    await js('window.__petTest.releaseRel(0, 0, 50)');
+    await sleep(400);
+    st = await js('window.__petState()');
+    results.push({
+      name: `物理关·低速空中释放不坠落(y=${st.pet.y.toFixed(0)}≈${airY}, phys=${st.physActive})`,
+      ok: st.physActive === false && Math.abs(st.pet.y - airY) < 0.5,
+    });
+
     // ② 甩动释放 → 也不抛掷，仍原地停
-//     await js('window.__petTest.releaseRel(1500, -1500, 2200)');
-//     await sleep(400);
-//     st = await js('window.__petState()');
-//     results.push({
-//       name: `物理关·甩动也不抛(phys=${st.physActive}, y不变)`,
-//       ok: st.physActive === false && Math.abs(st.pet.y - airY) < 0.5 && st.snap === null,
-//     });
-//
+    await js('window.__petTest.releaseRel(1500, -1500, 2200)');
+    await sleep(400);
+    st = await js('window.__petState()');
+    results.push({
+      name: `物理关·甩动也不抛(phys=${st.physActive}, y不变)`,
+      ok: st.physActive === false && Math.abs(st.pet.y - airY) < 0.5 && st.snap === null,
+    });
+
     // ③ 物理关下吸附仍工作：靠近假窗口顶沿、低速释放（走 routeRelease）→ 吸上，且不坠落
-//     const anchor = st.pet.anchor;
-//     const petH = st.pet.h;
-//     const winTop = 180;
-//     const placeY = winTop - anchor.y - 8;
-//     await js(`window.__petTest.placePet(${x0}, ${placeY})`);
-//     await js(`window.__petTest.setSnapWindows([{ id:'fake-win', cls:'Notepad', title:'test', left:0, top:${winTop}, right:${st.world.w}, bottom:900, minimized:false }])`);
-//     await js('window.__petTest.releaseRel(0, 0, 60)'); // 低速 → routeRelease 仍尝试吸附
-//     await waitFor(js, 'window.__petTest.snapInfo() !== null', 3000, '物理关·低速释放仍可吸附');
-//     const info = await js('window.__petTest.snapInfo()');
-//     st = await js('window.__petState()');
-//     results.push({
-//       name: `物理关·吸附仍工作(handle=${info && info.handle}, phys=${st.physActive})`,
-//       ok: !!info && info.handle === 'fake-win' && st.physActive === false,
-//     });
-//
+    const anchor = st.pet.anchor;
+    const petH = st.pet.h;
+    const winTop = 180;
+    const placeY = winTop - anchor.y - 8;
+    await js(`window.__petTest.placePet(${x0}, ${placeY})`);
+    await js(`window.__petTest.setSnapWindows([{ id:'fake-win', cls:'Notepad', title:'test', left:0, top:${winTop}, right:${st.world.w}, bottom:900, minimized:false }])`);
+    await js('window.__petTest.releaseRel(0, 0, 60)'); // 低速 → routeRelease 仍尝试吸附
+    await waitFor(js, 'window.__petTest.snapInfo() !== null', 3000, '物理关·低速释放仍可吸附');
+    const info = await js('window.__petTest.snapInfo()');
+    st = await js('window.__petState()');
+    results.push({
+      name: `物理关·吸附仍工作(handle=${info && info.handle}, phys=${st.physActive})`,
+      ok: !!info && info.handle === 'fake-win' && st.physActive === false,
+    });
+
     // ④ 假窗口消失 → 解除吸附；但物理关 → 不坠落（悬在原处）
-//     const snappedY = st.pet.y;
-//     await js('window.__petTest.setSnapWindows([])');
-//     await js('window.__petTest.pollSnap()');
-//     await sleep(150);
-//     st = await js('window.__petState()');
-//     results.push({
-//       name: `物理关·吸附解除但不坠落(y=${st.pet.y.toFixed(0)}≈${snappedY.toFixed(0)}, snap=${!!st.snap})`,
-//       ok: st.snap === null && st.physActive === false && Math.abs(st.pet.y - snappedY) < 0.5,
-//     });
-//
-//     await js('window.__petTest.setSnapWindows(null)');
-//     return assertMap(results);
-//   },
-// [REMOVED] UI 场景 physOff（对应功能已移除） 结束
+    const snappedY = st.pet.y;
+    await js('window.__petTest.setSnapWindows([])');
+    await js('window.__petTest.pollSnap()');
+    await sleep(150);
+    st = await js('window.__petState()');
+    results.push({
+      name: `物理关·吸附解除但不坠落(y=${st.pet.y.toFixed(0)}≈${snappedY.toFixed(0)}, snap=${!!st.snap})`,
+      ok: st.snap === null && st.physActive === false && Math.abs(st.pet.y - snappedY) < 0.5,
+    });
+
+    await js('window.__petTest.setSnapWindows(null)');
+    return assertMap(results);
+  },
 
   /**
    * “休息”（新功能，右键菜单）：透明度在 25%↔75% 间正弦渐变往返，结束时体力回满、

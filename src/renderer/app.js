@@ -17,10 +17,8 @@ const { CFG } = require('../shared/config');
 const { analyzeBitmap, hitTestPixel, scalePlan } = require('../shared/pixel');
 const { GestureTracker } = require('../shared/gesture');
 const { springParams, integrateSpring, impulse, breathe } = require('../shared/spring');
-// [REMOVED] 第二步·抛掷系统：渲染层不再 require 抛掷物理纯函数模块
-// const physics = require('../shared/physics');
-// [REMOVED] 第一步·吸附功能：渲染层不再 require 吸附几何纯函数模块
-// const { chooseSnapTarget, shouldDetach } = require('../shared/snap');
+const physics = require('../shared/physics');
+const { chooseSnapTarget, shouldDetach } = require('../shared/snap');
 const statusM = require('../shared/status');
 const { clamp } = require('../shared/util');
 
@@ -74,18 +72,18 @@ const app = {
   grabOffset: null,
   dragging: false,
 
-  // ---- 物理 ----  [REMOVED 第二步·抛掷系统]
-  // phys: null,          // {s, landedTick}
+  // ---- 物理 ----
+  phys: null,          // {s, landedTick}
 
-  // ---- 吸附（Phase 3）----  [REMOVED 第一步·吸附功能]
-  // snap: null,             // 当前吸附窗口的屏幕几何 {handle,left,top,right,bottom,minimized}
-  // snapEnabled: true,      // 是否允许吸附新窗口（托盘可关）
-  // snapPollTimer: 0,       // 吸附后的脱落轮询定时器
-  // snapPollBusy: false,
-  // _snapWinOverride: null, // UI 测试注入的窗口列表（默认走 IPC 枚举）
+  // ---- 吸附（Phase 3）----
+  snap: null,             // 当前吸附窗口的屏幕几何 {handle,left,top,right,bottom,minimized}
+  snapEnabled: true,      // 是否允许吸附新窗口（托盘可关）
+  snapPollTimer: 0,       // 吸附后的脱落轮询定时器
+  snapPollBusy: false,
+  _snapWinOverride: null, // UI 测试注入的窗口列表（默认走 IPC 枚举）
 
-  // ---- 物理模拟总开关（托盘可关）----  [REMOVED 第二步·抛掷系统]
-  // physicsEnabled: true,
+  // ---- 物理模拟总开关（托盘可关）----
+  physicsEnabled: true,
   // “休息”闪烁状态：{active,start,dur,period,min,max,opacity}；null=未在休息。
   rest: null,
 
@@ -215,10 +213,10 @@ async function loadPet(dataUrl) {
   petCanvas.style.transform = '';
   hintEl.style.display = 'none';
   app.anim.spr = { x: { s: 1, v: 0 }, y: { s: 1, v: 0 } };
-  // [REMOVED] 第一步/第二步 状态复位（吸附/抛掷已移除）：
-  // app.phys = null;
+  // 换宠后吸附/抛掷状态复位
+  app.phys = null;
   app.dragging = false;
-  // app.snap = null; ensureSnapPollStop();
+  app.snap = null; ensureSnapPollStop();
   syncPlacement();
   return true;
 }
@@ -285,8 +283,8 @@ function tickAnimations(dt, ms) {
   const P = springParams();
   A.spr.x = integrateSpring(A.spr.x, dt, P);
   A.spr.y = integrateSpring(A.spr.y, dt, P);
-  // [REMOVED] 第一步/第二步·抛掷与吸附移除后无“飞行中”态；拖动中不做待机呼吸（原: !app.phys && !app.dragging）
-  const idle = !app.dragging;
+  // 拖动/飞行中不做待机呼吸
+  const idle = !app.phys && !app.dragging;
   const br = idle ? breathe(ms) : { x: 1, y: 1 };
   const sx = A.spr.x.s * br.x;
   const sy = A.spr.y.s * br.y;
@@ -295,159 +293,150 @@ function tickAnimations(dt, ms) {
   updateRing(dt);
 }
 
-// [REMOVED] 第二步·抛掷系统（物理启停/积分函数） 开始
-// /* ================= 物理（抛掷/坠落；吸附 Phase 3 接入） ================= */
-//
-// function physState() {
-//   return { x: app.pet.pos.x, y: app.pet.pos.y, vx: 0, vy: 0, grounded: false, w: app.pet.w, h: app.pet.h };
-// }
-//
-// function startPhys(vel) {
-//   const s = physState();
-//   s.vx = vel.vx; s.vy = vel.vy;
-//   app.phys = { s, prev: { grounded: false }, bounceCount: 0 };
-// }
-//
-// function stopPhys() { app.phys = null; }
-//
-// function tickPhysics(dt) {
-//   if (!app.pet || !app.phys) return;
-//   const w = { w: app.worldW, h: app.worldH };
-//   const res = physics.step(app.phys.s, dt, w);
-//   app.pet.pos.x = res.s.x;
-//   app.pet.pos.y = res.s.y;
-//   app.phys.s = res.s;
-  // 落地/撞边触发的 Q 弹
-//   if (res.landed && res.s.grounded) {
-//     const impact = app.phys.prevVy > 0 ? app.phys.prevVy : 0;
-//     if (impact > 300) pulseLand();
-//     else pulse(Math.min(2, CFG.anim.headpatImpulse * 0.4));
-//   }
-//   if (res.hitWall || res.hitCeiling) pulse(1.2);
-//   app.phys.prevVy = res.s.vy;
-  // 已静止 & 在地面 -> 结束物理，回待机
-//   if (physics.atRest(res.s) && res.s.y >= app.worldH - app.pet.h - 0.5) stopPhys();
-// }
-// [REMOVED] 第二步·抛掷系统（物理启停/积分函数） 结束
+/* ================= 物理（抛掷/坠落；吸附 Phase 3 接入） ================= */
 
-/** 释放后的路由。
- *  [REMOVED] 第二步·抛掷系统 / 第一步·吸附功能：
- *  原实现是「甩动->抛掷；低速->尝试吸附到窗口顶沿，否则从当前位置坠落」。
- *  功能移除后：拖动 1:1 跟手，松开即停留在松开位置 —— 不再抛掷 / 吸附 / 重力下坠。 */
+function physState() {
+  return { x: app.pet.pos.x, y: app.pet.pos.y, vx: 0, vy: 0, grounded: false, w: app.pet.w, h: app.pet.h };
+}
+
+function startPhys(vel) {
+  const s = physState();
+  s.vx = vel.vx; s.vy = vel.vy;
+  app.phys = { s, prev: { grounded: false }, bounceCount: 0 };
+}
+
+function stopPhys() { app.phys = null; }
+
+function tickPhysics(dt) {
+  if (!app.pet || !app.phys) return;
+  const w = { w: app.worldW, h: app.worldH };
+  const res = physics.step(app.phys.s, dt, w);
+  app.pet.pos.x = res.s.x;
+  app.pet.pos.y = res.s.y;
+  app.phys.s = res.s;
+  // 落地/撞边触发的 Q 弹
+  if (res.landed && res.s.grounded) {
+    const impact = app.phys.prevVy > 0 ? app.phys.prevVy : 0;
+    if (impact > 300) pulseLand();
+    else pulse(Math.min(2, CFG.anim.headpatImpulse * 0.4));
+  }
+  if (res.hitWall || res.hitCeiling) pulse(1.2);
+  app.phys.prevVy = res.s.vy;
+  // 已静止 & 在地面 -> 结束物理，回待机
+  if (physics.atRest(res.s) && res.s.y >= app.worldH - app.pet.h - 0.5) stopPhys();
+}
+
+/** 释放后的路由：甩动 -> 抛掷；低速 -> 尝试吸附到窗口顶沿，否则从当前位置坠落。 */
 function routeRelease(rel) {
   emit('drag'); // 拖动结束仍计一次主动互动（保留原行为）
-  // ===== [REMOVED] 第二步·抛掷系统 原实现（整段注释保留，便于以后恢复）=====
-  // if (app.locked || !app.pet) return;
-  // const thrown = rel.speed >= CFG.physics.throwSpeedThreshold;
-  // // 宠物本就在地面休息 -> 不重新启动物理（避免原地小跳）
-  // const onFloor = app.pet.pos.y >= app.worldH - app.pet.h - 1;
-  // if (onFloor && !thrown) return;
-  //
-  // if (!app.physicsEnabled) {
-  //   // 物理完全禁用：甩出也原地停；低速释放只在贴近窗口顶沿时才吸附，否则悬在原位不下坠。
-  //   if (thrown) return;
-  //   void (async () => {
-  //     if (app.snapEnabled && await attemptSnap()) return;
-  //     // 吸附不上 → 停在松手位置（无重力）
-  //   })();
-  //   return;
-  // }
-  //
-  // if (thrown) { startPhys({ vx: rel.vx, vy: rel.vy }); return; }
-  // // 低速释放：先试着吸附到窗口顶沿；吸附失败则轻轻滑落/下坠
-  // void (async () => {
-  //   if (app.snapEnabled && await attemptSnap()) return;
-  //   if (!app.pet) return;
-  //   startPhys({ vx: rel.vx * 0.25, vy: 0 });
-  // })();
-  // ===== [REMOVED] 原实现结束 =====
+  if (app.locked || !app.pet) return;
+  const thrown = rel.speed >= CFG.physics.throwSpeedThreshold;
+  // 宠物本就在地面休息 -> 不重新启动物理（避免原地小跳）
+  const onFloor = app.pet.pos.y >= app.worldH - app.pet.h - 1;
+  if (onFloor && !thrown) return;
+
+  if (!app.physicsEnabled) {
+    // 物理完全禁用：甩出也原地停；低速释放只在贴近窗口顶沿时才吸附，否则悬在原位不下坠。
+    if (thrown) return;
+    void (async () => {
+      if (app.snapEnabled && await attemptSnap()) return;
+      // 吸附不上 → 停在松手位置（无重力）
+    })();
+    return;
+  }
+
+  if (thrown) { startPhys({ vx: rel.vx, vy: rel.vy }); return; }
+  // 低速释放：先试着吸附到窗口顶沿；吸附失败则轻轻滑落/下坠
+  void (async () => {
+    if (app.snapEnabled && await attemptSnap()) return;
+    if (!app.pet) return;
+    startPhys({ vx: rel.vx * 0.25, vy: 0 });
+  })();
 }
-// [REMOVED] 第一步·吸附功能（窗口顶沿吸附全逻辑） 开始
-//
-// /* ================= 吸附（窗口顶沿） ================= */
-//
-// /** 锚点（实体像素中心近似）的屏幕坐标。 */
-// function snapAnchorScreen() {
-//   const p = app.pet;
-//   return {
-//     x: p.pos.x + p.anchor.x + app.worldOrigin.x,
-//     y: p.pos.y + p.anchor.y + app.worldOrigin.y,
-//   };
-// }
-//
-// async function fetchWindows() {
-//   if (app._snapWinOverride !== null) return app._snapWinOverride;
-//   try { return await ipcRenderer.invoke('enumerate:windows'); }
-//   catch { return []; }
-// }
-//
-// /** 找候选窗口并吸附；成功返回 true。 */
-// async function attemptSnap() {
-//   if (!app.pet || app.locked) return false;
-//   const target = chooseSnapTarget(snapAnchorScreen(), await fetchWindows());
-//   if (!target) return false;
+
+/* ================= 吸附（窗口顶沿） ================= */
+
+/** 锚点（实体像素中心近似）的屏幕坐标。 */
+function snapAnchorScreen() {
+  const p = app.pet;
+  return {
+    x: p.pos.x + p.anchor.x + app.worldOrigin.x,
+    y: p.pos.y + p.anchor.y + app.worldOrigin.y,
+  };
+}
+
+async function fetchWindows() {
+  if (app._snapWinOverride !== null) return app._snapWinOverride;
+  try { return await ipcRenderer.invoke('enumerate:windows'); }
+  catch { return []; }
+}
+
+/** 找候选窗口并吸附；成功返回 true。 */
+async function attemptSnap() {
+  if (!app.pet || app.locked) return false;
+  const target = chooseSnapTarget(snapAnchorScreen(), await fetchWindows());
+  if (!target) return false;
   // 吸附前若用户已开始新的拖动/手势，则放弃本次吸附（枚举是异步的）
-//   if (app.buttonDown || app.gtr.isInteracting || app.dragging) return false;
-//   applySnap(target);
-//   return true;
-// }
-//
-// function applySnap(target) {
-//   const p = app.pet;
-//   app.phys = null;
+  if (app.buttonDown || app.gtr.isInteracting || app.dragging) return false;
+  applySnap(target);
+  return true;
+}
+
+function applySnap(target) {
+  const p = app.pet;
+  app.phys = null;
   // 底边贴窗口顶：contentY = (screenTop - originY) - petH，夹回区域顶。
-//   const contentTop = Math.max(0, target.top - app.worldOrigin.y);
-//   p.pos.y = contentTop - p.h;
-//   p.pos.x = clamp(p.pos.x, 0, Math.max(0, app.worldW - p.w));
-//   app.snap = {
-//     handle: target.id, left: target.left, top: target.top,
-//     right: target.right, bottom: target.bottom, minimized: !!target.minimized,
-//   };
-//   syncPlacement();
-//   ensureSnapPoll();
-// }
-//
-// function ensureSnapPoll() {
-//   if (app.snapPollTimer || app.paused) return;
-//   app.snapPollTimer = setInterval(() => { void snapPollTick(); }, CFG.snapPoll.followPollMs);
-// }
-//
-// function ensureSnapPollStop() {
-//   if (app.snapPollTimer) { clearInterval(app.snapPollTimer); app.snapPollTimer = 0; }
-// }
-//
-// /** 用户抓取已吸附的宠物：解除吸附但不触发坠落（宠物被拎在手里）。 */
-// function grabFromSnap() {
-//   if (!app.snap) return;
-//   app.snap = null;
-//   ensureSnapPollStop();
-// }
-//
-// /** 吸附中轮询：窗口被移动/最小化/关闭 → 失去支撑坠落。 */
-// async function snapPollTick() {
-//   if (!app.snap || app.snapPollBusy || app.paused || !app.pet) return;
-//   app.snapPollBusy = true;
-//   try {
-//     const wins = await fetchWindows();
-//     const now = wins.find((w) => String(w.id) === String(app.snap.handle)) || null;
-//     if (!now || shouldDetach(app.snap, now)) {
-//       detachFall();
-//     }
-//   } finally { app.snapPollBusy = false; }
-// }
-//
-// /** 失去支撑：解除吸附并从当前位置开始自由坠落。
-//  *  物理开关关闭时不坠落 —— 解除吸附，人物就停在原地。 */
-// function detachFall() {
-//   const reason = 'unsnap';
-//   const snap = app.snap;
-//   app.snap = null;
-//   ensureSnapPollStop();
-//   if (snap && app.pet && app.physicsEnabled) {
-//     startPhys({ vx: 0, vy: 0 }); // 仅重力下坠（不来自抛掷）
-  // }  // [REMOVED] 原 detachFall 的 if 收尾
-  // }  // [REMOVED] 原 detachFall 的函数收尾
-// [REMOVED] 第一步·吸附功能（窗口顶沿吸附全逻辑） 结束
+  const contentTop = Math.max(0, target.top - app.worldOrigin.y);
+  p.pos.y = contentTop - p.h;
+  p.pos.x = clamp(p.pos.x, 0, Math.max(0, app.worldW - p.w));
+  app.snap = {
+    handle: target.id, left: target.left, top: target.top,
+    right: target.right, bottom: target.bottom, minimized: !!target.minimized,
+  };
+  syncPlacement();
+  ensureSnapPoll();
+}
+
+function ensureSnapPoll() {
+  if (app.snapPollTimer || app.paused) return;
+  app.snapPollTimer = setInterval(() => { void snapPollTick(); }, CFG.snapPoll.followPollMs);
+}
+
+function ensureSnapPollStop() {
+  if (app.snapPollTimer) { clearInterval(app.snapPollTimer); app.snapPollTimer = 0; }
+}
+
+/** 用户抓取已吸附的宠物：解除吸附但不触发坠落（宠物被拎在手里）。 */
+function grabFromSnap() {
+  if (!app.snap) return;
+  app.snap = null;
+  ensureSnapPollStop();
+}
+
+/** 吸附中轮询：窗口被移动/最小化/关闭 → 失去支撑坠落。 */
+async function snapPollTick() {
+  if (!app.snap || app.snapPollBusy || app.paused || !app.pet) return;
+  app.snapPollBusy = true;
+  try {
+    const wins = await fetchWindows();
+    const now = wins.find((w) => String(w.id) === String(app.snap.handle)) || null;
+    if (!now || shouldDetach(app.snap, now)) {
+      detachFall();
+    }
+  } finally { app.snapPollBusy = false; }
+}
+
+/** 失去支撑：解除吸附并从当前位置开始自由坠落。
+ *  物理开关关闭时不坠落 —— 解除吸附，人物就停在原地。 */
+function detachFall() {
+  const reason = 'unsnap';
+  const snap = app.snap;
+  app.snap = null;
+  ensureSnapPollStop();
+  if (snap && app.pet && app.physicsEnabled) {
+    startPhys({ vx: 0, vy: 0 }); // 仅重力下坠（不来自抛掷）
+  }
+}
 
 /* ================= 手势驱动 ================= */
 
@@ -468,7 +457,7 @@ function onMouseMove(e) {
   if (app.gtr.snapshot().dragging) {
     if (!app.dragging) {
       app.dragging = true;
-      // [REMOVED] 第一步·吸附：抓取已吸附的宠物（app.phys = null; grabFromSnap();）
+      app.phys = null; grabFromSnap(); // 抓取瞬间终止飞行并解除吸附（拎在手里）
     }
     followDrag(c);
   }
@@ -539,7 +528,7 @@ function frame(ts) {
 
   app.gtr.tick(nowMs());
   processActions(app.gtr.drainActions());
-  // [REMOVED] 第二步·抛掷系统：tickPhysics(dt);  —— 物理更新循环已注释，拖动释放后停在原地
+  tickPhysics(dt);
   tickAnimations(dt, ts);
   tickRest();            // “休息”透明度正弦闪烁（含结束判定）
   syncPlacement();
@@ -578,20 +567,19 @@ function bindIpc() {
   ipcRenderer.on('ui:openPicker', (_e, { kind }) => openPetPicker(kind));
   // 原生右键菜单关闭后：清掉可能残留的按键/手势态（修复“菜单选完人物被吸到鼠标”）
   ipcRenderer.on('menu:closed', () => cleanupMenuGesture());
-  // [REMOVED] 第一步·吸附 开关同步：ipcRenderer.on('snap:enabled', (_e, { enabled }) => { app.snapEnabled = !!enabled; });
-  // [REMOVED] 第二步·抛掷 开关同步（含“关闭瞬间若正在飞行/坠落→原地冻结”）：
-  // ipcRenderer.on('physics:enabled', (_e, { enabled }) => {
-  //   app.physicsEnabled = !!enabled;
-  //   // 关闭瞬间若正在飞行/坠落 → 原地冻结（物理完全禁用）
-  //   if (!app.physicsEnabled && app.phys) stopPhys();
-  // });
+  // 吸附开关同步（托盘）
+  ipcRenderer.on('snap:enabled', (_e, { enabled }) => { app.snapEnabled = !!enabled; });
+  // 物理开关同步（托盘）：关闭瞬间若正在飞行/坠落 → 原地冻结（物理完全禁用）
+  ipcRenderer.on('physics:enabled', (_e, { enabled }) => {
+    app.physicsEnabled = !!enabled;
+    if (!app.physicsEnabled && app.phys) stopPhys();
+  });
   // ---- Phase 4：主菜单动作 / 背景 / BGM ----
   ipcRenderer.on('pet:action', (_e, a) => {
     if (!a) return;
     if (a.type === 'feed') pulseFeed();
     else if (a.type === 'resetStatus') resetStatus();
-    // [REMOVED] 第三步·右键主菜单：菜单项「休息」已移除 → 不再响应 rest
-    // else if (a.type === 'rest') startRest();
+    else if (a.type === 'rest') startRest();
   });
   ipcRenderer.on('bg:set', (_e, { path }) => setBgPath(path));
   ipcRenderer.on('bg:opacity', (_e, { opacity }) => setBgOpacity(opacity));
@@ -778,9 +766,8 @@ function persistStatus(force) {
   if (!force && now - app._lastStatusPersist < CFG.status.persistIntervalMs) return;
   app._lastStatusPersist = now;
   const patch = { status: app.status };
-  // 宠物未在拖动时顺带记住位置
-  // [REMOVED] 原条件还排除了飞行/吸附（!app.phys && !app.snap）：吸附与抛掷已移除，拖放即停，直接落点即可。
-  if (app.pet && !app.dragging) {
+  // 宠物未在拖动/飞行/吸附时顺带记住位置
+  if (app.pet && !app.dragging && !app.phys && !app.snap) {
     patch.pos = { x: app.pet.pos.x, y: app.pet.pos.y };
   }
   ipcRenderer.send('settings:save', patch);
@@ -1238,7 +1225,7 @@ function testState() {
   const v = app.status ? statusM.deriveStatus(app.status) : null;
   return {
     ready: app.ready, testMode: app.testMode, locked: app.locked, paused: app.paused,
-    petLoaded: !!p, dragging: app.dragging, // [REMOVED] 第二步·抛掷：physActive: !!app.phys,（物理已移除，恒 false）
+    petLoaded: !!p, dragging: app.dragging, physActive: !!app.phys,
     interactive: app.ignoreSent === false,
     world: { w: app.worldW, h: app.worldH },
     pet: p ? { w: p.w, h: p.h, x: p.pos.x, y: p.pos.y, anchor: { ...p.anchor } } : null,
@@ -1246,14 +1233,14 @@ function testState() {
       const d = app.anim.drawnScale || { x: 1, y: 1 };
       return { sx: app.anim.spr.x.s, sy: app.anim.spr.y.s, drawnSy: d.y, drawnSx: d.x };
     })() : null,
-    // [REMOVED] 第一步·吸附 / 第二步·抛掷：状态快照里以下字段对应功能已移除（注释保留，避免 undefined 字段）
-    // phys: app.phys ? {
-    //   x: app.phys.s.x, y: app.phys.s.y, vx: app.phys.s.vx, vy: app.phys.s.vy,
-    //   grounded: app.phys.s.grounded,
-    // } : null,
-    // snap: app.snap ? { ...app.snap } : null,
-    // snapEnabled: app.snapEnabled,
-    // physicsEnabled: app.physicsEnabled,
+    // 吸附 / 抛掷 状态快照
+    phys: app.phys ? {
+      x: app.phys.s.x, y: app.phys.s.y, vx: app.phys.s.vx, vy: app.phys.s.vy,
+      grounded: app.phys.s.grounded,
+    } : null,
+    snap: app.snap ? { ...app.snap } : null,
+    snapEnabled: app.snapEnabled,
+    physicsEnabled: app.physicsEnabled,
     rest: app.rest ? { ...app.rest } : null,
     pillCollapsed: pillEl.classList.contains('collapsed'),
     cursor: { ...app.cursor, known: app.cursorKnown },
@@ -1294,11 +1281,10 @@ async function init() {
   window.addEventListener('resize', () => applyRegion({ x: app.worldOrigin.x, y: app.worldOrigin.y, width: window.innerWidth, height: window.innerHeight }));
   window.dispatchEvent(new Event('petinit'));
 
-  // 读取折叠状态
+  // 读取折叠状态 + 吸附/物理开关（托盘可关）
   if (initInfo.settings && initInfo.settings.pillCollapsed) pillEl.classList.add('collapsed');
-  // [REMOVED] 第一步/第二步：不再读取吸附/物理开关（settings 字段保留但忽略其作用）
-  // app.snapEnabled = !(initInfo.settings && initInfo.settings.snapEnabled === false);
-  // app.physicsEnabled = !(initInfo.settings && initInfo.settings.physicsEnabled === false);
+  app.snapEnabled = !(initInfo.settings && initInfo.settings.snapEnabled === false);
+  app.physicsEnabled = !(initInfo.settings && initInfo.settings.physicsEnabled === false);
   phase4Init(initInfo.settings, initInfo.workArea);
   updateUiRects();
 
@@ -1327,20 +1313,20 @@ async function init() {
       feed() { pulseFeed(); },
       toggleLock() { toggleLock(); },
       heart(level = 1) { const p = app.pet; if (p) spawnHeart(p.pos.x + p.anchor.x, p.pos.y + 10, level); },
-      // [REMOVED] 第二步·抛掷：forcePhys(vx, vy) { startPhys({ vx, vy }); },
+      forcePhys(vx, vy) { startPhys({ vx, vy }); },
       animState() { return { sx: app.anim.spr.x.s, sy: app.anim.spr.y.s, ring: app.anim.ringVisible }; },
       drag(dx, dy) { if (app.pet) { app.pet.pos.x += dx; app.pet.pos.y += dy; clampPetIntoWorld(app.pet); syncPlacement(); } },
-      // 拖放定位钩子（背景等场景用；吸附/抛掷测试钩子随功能移除）
+      // 拖放定位钩子（吸附/抛掷/背景等场景用）
       placePet(x, y) { if (app.pet) { app.pet.pos.x = x; app.pet.pos.y = y; syncPlacement(); } },
-      // [REMOVED] 第一步·吸附 测试驱动：注入窗口列表 / 直接尝试吸附 / 触发脱落检查
-      // setSnapWindows(wins) { app._snapWinOverride = wins; },
-      // trySnap: () => attemptSnap(),
-      // pollSnap: () => snapPollTick(),
-      // detach: () => detachFall(),
-      // snapInfo: () => app.snap ? { ...app.snap } : null,
-      // [REMOVED] 第二步·抛掷 开关钩子 / 释放路由钩子
-      // setPhysicsEnabled(v) { app.physicsEnabled = !!v; if (!app.physicsEnabled && app.phys) stopPhys(); },
-      // releaseRel(vx, vy, speed) { routeRelease({ vx, vy, speed: speed == null ? Math.hypot(vx, vy) : speed }); },
+      // 吸附测试驱动：注入窗口列表 / 直接尝试吸附 / 触发脱落检查
+      setSnapWindows(wins) { app._snapWinOverride = wins; },
+      trySnap: () => attemptSnap(),
+      pollSnap: () => snapPollTick(),
+      detach: () => detachFall(),
+      snapInfo: () => app.snap ? { ...app.snap } : null,
+      // 物理/释放路由钩子
+      setPhysicsEnabled(v) { app.physicsEnabled = !!v; if (!app.physicsEnabled && app.phys) stopPhys(); },
+      releaseRel(vx, vy, speed) { routeRelease({ vx, vy, speed: speed == null ? Math.hypot(vx, vy) : speed }); },
       // Phase 4：状态 / 面板 测试钩子
       resetStatus: () => resetStatus(),
       setStatus(partial) { if (app.status) { app.status = { ...app.status, ...partial, lastTs: Date.now() }; applyStatusVisual(); refreshPill(); } },

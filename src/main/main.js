@@ -239,16 +239,14 @@ class PetApp {
       if (v) this.showWindow(); else this.hideWindow();
     });
 
-    // [REMOVED] 第一步·吸附功能（窗口枚举 IPC 开始）
-    // // 窗口枚举（吸附）
-    // ipcMain.handle('enumerate:windows', () => {
-    //   if (!this.win) return [];
-    //   const selfId = this.selfNativeId();
-    //   return this.winEnum
-    //     .list()
-    //     .filter((w) => w.id !== selfId && !isSystemWindow(w));
-    // });
-    // [REMOVED] 第一步·吸附功能（窗口枚举 IPC 结束）
+    // 窗口枚举（吸附）
+    ipcMain.handle('enumerate:windows', () => {
+      if (!this.win) return [];
+      const selfId = this.selfNativeId();
+      return this.winEnum
+        .list()
+        .filter((w) => w.id !== selfId && !isSystemWindow(w));
+    });
 
     ipcMain.on('app:quit', () => this.quit());
   }
@@ -378,31 +376,27 @@ class PetApp {
           if (self.win && !self.win.isDestroyed()) self.win.webContents.send('lock:change', { locked: next });
         },
       },
-      // [REMOVED] 第一步·吸附功能（托盘开关项 开始）
-      // {
-      //   label: '窗口顶沿吸附', type: 'checkbox', checked: this.store.get().snapEnabled !== false,
-      //   click: (item) => {
-      //     const v = !!item.checked;
-      //     this.store.update({ snapEnabled: v }).saveSoon();
-      //     if (self.win && !self.win.isDestroyed()) self.win.webContents.send('snap:enabled', { enabled: v });
-      //   },
-      // },
-      // [REMOVED] 第一步·吸附功能（托盘开关项 结束）
-      // [REMOVED] 第二步·抛掷系统（托盘物理开关项 开始）
-      // {
-      //   label: '物理模拟（甩动/坠落）', type: 'checkbox', checked: this.store.get().physicsEnabled !== false,
-      //   click: (item) => {
-      //     const v = !!item.checked;
-      //     this.store.update({ physicsEnabled: v }).saveSoon();
-      //     if (self.win && !self.win.isDestroyed()) self.win.webContents.send('physics:enabled', { enabled: v });
-      //   },
-      // },
-      // [REMOVED] 第二步·抛掷系统（托盘物理开关项 结束）
+      {
+        label: '窗口顶沿吸附', type: 'checkbox', checked: this.store.get().snapEnabled !== false,
+        click: (item) => {
+          const v = !!item.checked;
+          this.store.update({ snapEnabled: v }).saveSoon();
+          if (self.win && !self.win.isDestroyed()) self.win.webContents.send('snap:enabled', { enabled: v });
+        },
+      },
+      {
+        label: '物理模拟（甩动/坠落）', type: 'checkbox', checked: this.store.get().physicsEnabled !== false,
+        click: (item) => {
+          const v = !!item.checked;
+          this.store.update({ physicsEnabled: v }).saveSoon();
+          if (self.win && !self.win.isDestroyed()) self.win.webContents.send('physics:enabled', { enabled: v });
+        },
+      },
       { type: 'separator' },
       { label: '主菜单…', click: () => this.popupMainMenu() },
-      // [REMOVED] 活动区域设置菜单项（设置面板入口随功能保留代码、隐藏入口）
-      // { label: '活动区域设置…', click: () => { this.showIfHidden(); if (self.win && !self.win.isDestroyed()) self.win.webContents.send('ui:openRegionEditor'); } },
-      { label: '更换宠物…', click: () => this.openPicker('pet') },
+      { label: '活动区域设置…', click: () => { this.showIfHidden(); if (self.win && !self.win.isDestroyed()) self.win.webContents.send('ui:openRegionEditor'); } },
+      // 更换宠物入口已隐藏（按需求注释，不出现在托盘菜单；openPicker('pet') 代码保留）
+      // { label: '更换宠物…', click: () => this.openPicker('pet') },
       { type: 'separator' },
       { label: '退出', click: () => self.quit() },
     ]);
@@ -423,46 +417,41 @@ class PetApp {
     if (!this.win || this.win.isDestroyed()) return;
     this.showIfHidden();
     const self = this;
-    // [REMOVED] 音乐/背景子菜单已随步骤三移除，其仅有的取数不再需要（注释保留）
-    // const st = this.store.get();
-    // const playlist = st.playlist || [];
-    // const bg = st.background;
-    // const bgOpacityPct = bg && typeof bg.opacity === 'number' ? Math.round(bg.opacity * 100) : null;
+    const st = this.store.get();
+    const playlist = st.playlist || [];
+    const bg = st.background;
+    const bgOpacityPct = bg && typeof bg.opacity === 'number' ? Math.round(bg.opacity * 100) : null;
 
     const template = [
-      // [REMOVED] 步骤三·主菜单项「休息」（对应代码保留、入口移除）
-      // { label: '休息', click: () => self.act('rest') },
+      { label: '休息', click: () => self.act('rest') },
       { label: '喂食', click: () => self.act('feed') },
-      // [REMOVED] 步骤三·主菜单子菜单「音乐」（对应代码保留、入口移除 开始）
-      // {
-      //   label: `音乐${playlist.length ? `（${playlist.length}）` : ''}`,
-      //   submenu: [
-      //     { label: '添加音乐…', click: () => self.openPicker('audio') },
-      //     { type: 'separator' },
-      //     { label: '播放 / 暂停', click: () => { self.showIfHidden(); self.send('audio:toggle'); } },
-      //     { label: '下一首', click: () => { self.showIfHidden(); self.send('audio:next'); } },
-      //     { label: '上一首', click: () => { self.showIfHidden(); self.send('audio:prev'); } },
-      //     { label: '停止播放', click: () => { self.showIfHidden(); self.send('audio:stop'); } },
-      //     { label: '清空列表', click: () => self.clearPlaylist() },
-      //   ],
-      // },
-      // [REMOVED] 步骤三·主菜单子菜单「音乐」结束
-      // [REMOVED] 步骤三·主菜单子菜单「背景」（对应代码保留、入口移除 开始）
-      // {
-      //   label: `背景${bg && bg.path ? '（已设置）' : ''}`,
-      //   submenu: [
-      //     { label: '选择背景图片…', click: () => self.openPicker('bg') },
-      //     { label: '清除背景', click: () => { self.store.updateDeep('background', { path: null, opacity: self.bgOpacityNow() }).saveSoon(); self.send('bg:clear'); } },
-      //     { type: 'separator' },
-      //     { label: '不透明度 25%', type: 'radio', checked: bgOpacityPct === 25, click: () => self.send('bg:opacity', { opacity: 0.25 }) },
-      //     { label: '不透明度 50%', type: 'radio', checked: bgOpacityPct === 50, click: () => self.send('bg:opacity', { opacity: 0.5 }) },
-      //     { label: '不透明度 75%', type: 'radio', checked: bgOpacityPct === 75, click: () => self.send('bg:opacity', { opacity: 0.75 }) },
-      //     { label: '不透明度 100%', type: 'radio', checked: bgOpacityPct === 100, click: () => self.send('bg:opacity', { opacity: 1 }) },
-      //   ],
-      // },
-      // [REMOVED] 步骤三·主菜单子菜单「背景」结束
+      {
+        label: `音乐${playlist.length ? `（${playlist.length}）` : ''}`,
+        submenu: [
+          { label: '添加音乐…', click: () => self.openPicker('audio') },
+          { type: 'separator' },
+          { label: '播放 / 暂停', click: () => { self.showIfHidden(); self.send('audio:toggle'); } },
+          { label: '下一首', click: () => { self.showIfHidden(); self.send('audio:next'); } },
+          { label: '上一首', click: () => { self.showIfHidden(); self.send('audio:prev'); } },
+          { label: '停止播放', click: () => { self.showIfHidden(); self.send('audio:stop'); } },
+          { label: '清空列表', click: () => self.clearPlaylist() },
+        ],
+      },
+      {
+        label: `背景${bg && bg.path ? '（已设置）' : ''}`,
+        submenu: [
+          { label: '选择背景图片…', click: () => self.openPicker('bg') },
+          { label: '清除背景', click: () => { self.store.updateDeep('background', { path: null, opacity: self.bgOpacityNow() }).saveSoon(); self.send('bg:clear'); } },
+          { type: 'separator' },
+          { label: '不透明度 25%', type: 'radio', checked: bgOpacityPct === 25, click: () => self.send('bg:opacity', { opacity: 0.25 }) },
+          { label: '不透明度 50%', type: 'radio', checked: bgOpacityPct === 50, click: () => self.send('bg:opacity', { opacity: 0.5 }) },
+          { label: '不透明度 75%', type: 'radio', checked: bgOpacityPct === 75, click: () => self.send('bg:opacity', { opacity: 0.75 }) },
+          { label: '不透明度 100%', type: 'radio', checked: bgOpacityPct === 100, click: () => self.send('bg:opacity', { opacity: 1 }) },
+        ],
+      },
       { label: '重置状态', click: () => self.act('resetStatus') },
-      { label: '更换宠物…', click: () => self.openPicker('pet') },
+      // 更换宠物入口已隐藏（按需求注释，不出现在主菜单；openPicker('pet') 代码保留）
+      // { label: '更换宠物…', click: () => self.openPicker('pet') },
       { type: 'separator' },
       { label: '退出', click: () => self.quit() },
     ];
