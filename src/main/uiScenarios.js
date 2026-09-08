@@ -29,6 +29,16 @@ async function waitFor(js, condExpr, timeoutMs, what) {
   throw new Error(`等待超时: ${what}`);
 }
 
+/** 在待办窗口里把 #due 输入框设为 now+offsetMs 的本地时间（datetime-local 分钟精度）。 */
+function setDueInput(offsetMs) {
+  return `(() => {
+    const d = new Date(Date.now() + ${offsetMs});
+    const pad = (n) => String(n).padStart(2, '0');
+    document.getElementById('due').value =
+      d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+  })()`;
+}
+
 const scenarios = {
   /** 启动问候：桌宠启动后应自动弹出一条随机问候气泡。 */
   async greeting(ctx) {
@@ -205,16 +215,10 @@ const scenarios = {
 
     ctx.openTodo();
     await waitForWin('todoWin');
-    const dueValue = (offsetMs) => `(() => {
-      const d = new Date(Date.now() + ${offsetMs});
-      const pad = (n) => String(n).padStart(2, '0');
-      document.getElementById('due').value =
-        d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
-    })()`;
 
     // ① 添加：未来截止 + ♥
     await execIn('todoWin', `document.getElementById('text').value = '写周报'`);
-    await execIn('todoWin', dueValue(2 * 60 * 1000));
+    await execIn('todoWin', setDueInput(2 * 60 * 1000));
     await execIn('todoWin', `document.getElementById('important').checked = true`);
     await execIn('todoWin', `document.getElementById('addBtn').click()`);
     await sleep(200);
@@ -236,7 +240,7 @@ const scenarios = {
 
     // ③ 到期待办 → 主进程检查 → 主窗气泡（真实 checkDueTodos 路径）
     await execIn('todoWin', `document.getElementById('text').value = '取快递'`);
-    await execIn('todoWin', dueValue(-1000));
+    await execIn('todoWin', setDueInput(-1000));
     await execIn('todoWin', `document.getElementById('addBtn').click()`);
     await sleep(200);
     ctx.checkDueTodos();
@@ -262,6 +266,50 @@ const scenarios = {
     rows = await execIn('todoWin', rowsExpr);
     st = mainState();
     results.push({ name: `删除待办(剩 ${rows.length} 行)`, ok: rows.length === 1 && rows[0].txt === '取快递' && st.todos.length === 1 });
+
+    return assertMap(results);
+  },
+
+  /**
+   * 随机催促（功能 6）：♥ 且临近截止的待办触发催促 → 主窗气泡“主人，'xxx' 做完了吗？”；
+   * 锁定状态下触发不生效（解锁后恢复正常）。触发动作走真实 triggerReminderNow
+   * （即 25~30min 随机定时器到点执行的那个函数）；权重选择逻辑由单元测试覆盖。
+   */
+  async reminder(ctx) {
+    const { js, sleep, execIn, waitForWin } = ctx;
+    await waitFor(js, 'window.__petReady && window.__petState().petLoaded', 12000, 'renderer ready + pet');
+    const results = [];
+
+    // 经真实待办窗口添加一条 ♥ 且剩余 5 分钟的待办（≤10min → 大幅加权）
+    ctx.openTodo();
+    await waitForWin('todoWin');
+    await execIn('todoWin', `document.getElementById('text').value = '背单词'`);
+    await execIn('todoWin', setDueInput(5 * 60 * 1000));
+    await execIn('todoWin', `document.getElementById('important').checked = true`);
+    await execIn('todoWin', `document.getElementById('addBtn').click()`);
+    await sleep(250);
+    await execIn('todoWin', `window.close()`);
+
+    // 触发一次催促（定时器到点时的动作）→ 气泡含模板文案
+    ctx.triggerReminderNow();
+    await waitFor(js, `document.getElementById('bubble').classList.contains('show') && document.getElementById('bubble').textContent.includes('背单词')`, 5000, '催促气泡出现');
+    const text = await js(`document.getElementById('bubble').textContent`);
+    results.push({ name: `催促气泡按模板生成(${text})`, ok: text.includes('做完了吗') });
+
+    // 锁定状态下不催促
+    await js(`window.__petTest.hideBubble()`);
+    await js('window.__petTest.toggleLock()');
+    await sleep(200);
+    ctx.triggerReminderNow();
+    await sleep(150);
+    const none = await js(`!document.getElementById('bubble').classList.contains('show')`);
+    results.push({ name: '锁定状态下触发不生效', ok: none === true });
+
+    // 解锁还原（不残留锁定态）
+    await js('window.__petTest.toggleLock()');
+    await sleep(200);
+    const unlocked = await js(`window.__petState().locked === false`);
+    results.push({ name: '场景结束恢复解锁', ok: unlocked === true });
 
     return assertMap(results);
   },

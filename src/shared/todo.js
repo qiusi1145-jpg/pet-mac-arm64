@@ -3,6 +3,7 @@
  * 待办清单纯逻辑：结构清洗 / 到期判断 / 催促目标选择（权重按紧迫度）。
  * 只做数据处理，不做任何 IO；持久化由 store.js，UI 由待办窗口完成。
  */
+const { CFG } = require('./config');
 
 /** 单条待办清洗：非法字段回退默认，text 为空则丢弃（返回 null）。 */
 function normalizeTodo(t) {
@@ -43,7 +44,6 @@ function findDueTodos(todos, now) {
  * 无截止时间权重 1。加权随机（rng 可注入以便测试）。
  */
 function pickReminderTodo(todos, now, rng = Math.random) {
-  const { CFG } = require('./config');
   const pool = (todos || []).filter((t) => !t.done && t.important);
   if (!pool.length) return null;
   const weights = pool.map((t) => {
@@ -67,4 +67,10 @@ function formatTask(template, task) {
   return String(template || '{task}').replace('{task}', task);
 }
 
-module.exports = { normalizeTodo, normalizeTodos, findDueTodos, pickReminderTodo, formatTask };
+/** 下一次催促的随机延迟（min~max 区间内均匀分布，rng 可注入便于测试）。 */
+function randomReminderDelay(rng = Math.random) {
+  const c = CFG.reminder;
+  return c.minIntervalMs + rng() * Math.max(0, c.maxIntervalMs - c.minIntervalMs);
+}
+
+module.exports = { normalizeTodo, normalizeTodos, findDueTodos, pickReminderTodo, formatTask, randomReminderDelay };

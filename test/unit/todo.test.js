@@ -2,8 +2,9 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { normalizeTodo, normalizeTodos, findDueTodos, pickReminderTodo, formatTask } = require('../../src/shared/todo');
+const { normalizeTodo, normalizeTodos, findDueTodos, pickReminderTodo, formatTask, randomReminderDelay } = require('../../src/shared/todo');
 const { normalizeSettings } = require('../../src/shared/settings');
+const { CFG } = require('../../src/shared/config');
 
 test('待办清洗：非法字段回退默认，空文本丢弃', () => {
   const t = normalizeTodo({ text: '  写周报  ', due: 'x', done: 1, important: 'yes' });
@@ -78,6 +79,14 @@ test('催促选择：已完成/不重要的不参与', () => {
 test('提醒模板：{task} 替换', () => {
   assert.equal(formatTask("主人，'{task}' 做完了吗？", '写周报'), "主人，'写周报' 做完了吗？");
   assert.equal(formatTask('主人，该做“{task}”了！', '取快递'), '主人，该做“取快递”了！');
+});
+
+test('催促间隔：随机落在 25~30 分钟配置区间内', () => {
+  for (const r of [0, 0.25, 0.5, 0.75, 1]) {
+    const d = randomReminderDelay(() => r);
+    assert.ok(d >= CFG.reminder.minIntervalMs && d <= CFG.reminder.maxIntervalMs + 1e-9);
+  }
+  assert.ok(CFG.reminder.minIntervalMs >= 25 * 60 * 1000 && CFG.reminder.maxIntervalMs <= 30 * 60 * 1000);
 });
 
 test('settings：todos 字段持久化往返（normalizeSettings 清洗）', () => {

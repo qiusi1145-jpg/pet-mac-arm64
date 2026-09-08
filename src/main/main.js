@@ -14,7 +14,7 @@ const path = require('path');
 const fs = require('fs');
 const { CFG } = require('../shared/config');
 const { computeRegion, defaultRegionSettings } = require('../shared/region');
-const { findDueTodos, formatTask, normalizeTodo } = require('../shared/todo');
+const { findDueTodos, formatTask, normalizeTodo, pickReminderTodo, randomReminderDelay } = require('../shared/todo');
 const { Store } = require('./store');
 const { WinEnum, isSystemWindow } = require('./winenum');
 
@@ -56,6 +56,7 @@ class PetApp {
     this.todoWin = null;          // 待办清单窗口
     this.todoTimer = 0;           // 到期检查定时器
     this.remindedTodoIds = new Set(); // 已提醒过的到期待办（本次运行内不重复弹）
+    this.reminderTimer = 0;       // 随机催促定时器
   }
 
   async init() {
@@ -90,6 +91,7 @@ class PetApp {
     this.createTray();
     this.startCursorPush();
     this.startTodoChecker();
+    this.scheduleReminder();
     log('ipc/tray/cursor up');
 
     if (process.env.PET_SMOKE) {
@@ -443,6 +445,27 @@ class PetApp {
     this.send('bubble:todo', { text, ms: CFG.todo.remindDurationMs });
   }
 
+  /* ---------------- 随机催促（♥ 重要待办） ---------------- */
+
+  /** 排下一次随机催促：25~30 分钟之间概率性触发（不是固定间隔）。 */
+  scheduleReminder() {
+    if (this.reminderTimer) clearTimeout(this.reminderTimer);
+    this.reminderTimer = setTimeout(() => {
+      this.reminderTimer = 0;
+      this.triggerReminderNow();
+      this.scheduleReminder();
+    }, randomReminderDelay());
+  }
+
+  /** 立即按规则催促一次：仅非锁定、非隐藏时生效；从 ♥ 待办按紧迫度加权选一条。 */
+  triggerReminderNow() {
+    if (this.locked || !this.visible) return;
+    const t = pickReminderTodo(this.store.get().todos || [], Date.now());
+    if (!t) return;
+    const text = formatTask(CFG.reminder.template, t.text);
+    this.send('bubble:reminder', { text, ms: CFG.reminder.durationMs });
+  }
+
   /* ---------------- 托盘 ---------------- */
 
   createTray() {
@@ -677,6 +700,8 @@ class PetApp {
 
   quit() {
     this.quitNow = true;
+    if (this.todoTimer) { clearInterval(this.todoTimer); this.todoTimer = 0; }
+    if (this.reminderTimer) { clearTimeout(this.reminderTimer); this.reminderTimer = 0; }
     this.store.flush();
     app.exit(0);
   }
