@@ -80,6 +80,34 @@ const scenarios = {
     return assertMap(results);
   },
 
+  /** 眨眼：视觉层闭眼图可显示/隐藏，且判定区域不因此变化。 */
+  async blink(ctx) {
+    const { js } = ctx;
+    await waitFor(js, 'window.__petReady && window.__petState().petLoaded', 12000, 'renderer ready + pet');
+    const r = await js(`(() => {
+      const T = window.__petTest;
+      const s = T.state();
+      const p = s.pet;
+      let hit = null;
+      outer:
+      for (let dy = -10; dy <= 10; dy++) {
+        for (let dx = -10; dx <= 10; dx++) {
+          const x = p.x + Math.round(p.anchor.x) + dx;
+          const y = p.y + Math.round(p.anchor.y) + dy;
+          if (T.isInteractableAt(x, y)) { hit = { x, y }; break outer; }
+        }
+      }
+      T.forceBlink(true);
+      const visible = document.getElementById('blink').style.display === 'block';
+      const hitWhileVisible = T.isInteractableAt(hit.x, hit.y);
+      T.forceBlink(false);
+      const hidden = document.getElementById('blink').style.display === 'none';
+      const hitWhileHidden = T.isInteractableAt(hit.x, hit.y);
+      return { visible, hidden, hitWhileVisible, hitWhileHidden };
+    })()`);
+    return r.visible && r.hidden && r.hitWhileVisible === true && r.hitWhileHidden === true;
+  },
+
   /** 抛掷物理：注入速度→宠物真实飞动并最终落地回待机。 */
   async dragPhysics(ctx) {
     const { js, sleep } = ctx;

@@ -19,6 +19,7 @@ const { GestureTracker } = require('../shared/gesture');
 const { springParams, integrateSpring, impulse, breathe } = require('../shared/spring');
 const physics = require('../shared/physics');
 const { chooseSnapTarget, shouldDetach } = require('../shared/snap');
+const { planBlink } = require('../shared/blink');
 const statusM = require('../shared/status');
 const { clamp } = require('../shared/util');
 
@@ -27,6 +28,7 @@ const worldEl = $('world'), petWrap = $('petWrap'), petCanvas = $('pet');
 const fxEl = $('fx'), ringWrap = $('ringWrap'), ringArc = $('ringArc');
 const pillEl = $('pill');
 const bubbleEl = $('bubble');
+const blinkEl = $('blink');
 const bgEl = $('bg'), regionPanel = $('panel'), panelDims = $('panelDims');
 const hintEl = $('hint');
 const petPickerEl = $('petPicker');
@@ -105,6 +107,7 @@ const app = {
   // 应用内图片选择器（更换宠物 / 选背景，绕开这台机器上失灵的原生文件对话框）
   petPickerOpen: false,
   bubbleTimer: null,
+  blink: { visible: false, timer: null, endTimer: null },
   petPickerKind: 'pet',   // 'pet' | 'bg'
   petPickerDir: null,
   petPickerCur: null,     // 当前选中的源文件路径
@@ -211,6 +214,7 @@ async function loadPet(dataUrl) {
   app.pet = p;
   petWrap.style.width = p.w + 'px';
   petWrap.style.height = p.h + 'px';
+  blinkEl.src = '../assets/blink.png';
   petCanvas.style.transformOrigin = `${p.anchor.x}px ${p.anchor.y}px`;
   petCanvas.style.transform = '';
   hintEl.style.display = 'none';
@@ -276,6 +280,24 @@ function hideBubble() {
   if (!bubbleEl) return;
   bubbleEl.classList.remove('show');
   if (app.bubbleTimer) { clearTimeout(app.bubbleTimer); app.bubbleTimer = null; }
+}
+
+function setBlinkVisible(v) {
+  app.blink.visible = !!v;
+  if (blinkEl) blinkEl.style.display = app.blink.visible ? 'block' : 'none';
+}
+
+function scheduleBlink() {
+  if (!app.pet) return;
+  const plan = planBlink();
+  app.blink.timer = setTimeout(() => {
+    setBlinkVisible(true);
+    app.blink.endTimer = setTimeout(() => {
+      setBlinkVisible(false);
+      app.blink.endTimer = null;
+      scheduleBlink();
+    }, plan.durationMs);
+  }, plan.intervalMs);
 }
 
 function updateRing(dt) {
@@ -1324,6 +1346,7 @@ async function init() {
   app.ready = true;
   window.__petReady = true;
   window.__pet = app;
+  scheduleBlink();
   setTimeout(() => {
     const list = CFG.greeting.greetings || [];
     if (list.length) showBubble(list[Math.floor(Math.random() * list.length)], CFG.greeting.durationMs);
@@ -1340,6 +1363,7 @@ async function init() {
       feed() { pulseFeed(); },
       toggleLock() { toggleLock(); },
       heart(level = 1) { const p = app.pet; if (p) spawnHeart(p.pos.x + p.anchor.x, p.pos.y + 10, level); },
+      forceBlink(visible) { setBlinkVisible(!!visible); },
       showBubble: (text, ms) => showBubble(text, ms),
       hideBubble: () => hideBubble(),
       forcePhys(vx, vy) { startPhys({ vx, vy }); },

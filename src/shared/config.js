@@ -237,6 +237,15 @@ const CFG = {
     delayMs: 500,
     durationMs: 5000,
   },
+
+  /* ---------- 眨眼 ---------- */
+  blink: {
+    // 图片固定读取 src/assets/blink.png，用户可替换为与主图同尺寸的闭眼图。
+    minIntervalMs: 2800,
+    maxIntervalMs: 6200,
+    minDurationMs: 90,
+    maxDurationMs: 210,
+  },
 };
 
 deepFreeze(CFG);
