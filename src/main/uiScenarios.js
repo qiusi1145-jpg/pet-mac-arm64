@@ -142,6 +142,58 @@ const scenarios = {
       sameStatus(r.status0, r.status1) && sameStatus(r.status0, r.status2);
   },
 
+  /**
+   * 锁定并保持始终置于顶层（功能 4）：锁定 → 主进程置顶级别切换为 screen-saver、
+   * 整窗强制穿透（即使光标在宠物实体像素上）、托盘出现“解锁（保底入口）”；
+   * 解锁 → 恢复 floating 常规置顶与正常穿透语义、托盘文本更新。
+   */
+  async lock(ctx) {
+    const { js, sleep, mainState } = ctx;
+    await waitFor(js, 'window.__petReady && window.__petState().petLoaded', 12000, 'renderer ready + pet');
+    const results = [];
+
+    let ms = mainState();
+    results.push({ name: `初始未锁定且为常规置顶(level=${ms.lockLevel})`, ok: ms.locked === false && ms.lockLevel === 'floating' });
+
+    // 锁定（渲染层长按 3s 的切换路径）
+    await js('window.__petTest.toggleLock()');
+    await sleep(200);
+    ms = mainState();
+    results.push({ name: `锁定后用最高置顶级别(level=${ms.lockLevel})`, ok: ms.locked === true && ms.lockLevel === 'screen-saver' });
+    results.push({ name: '锁定后托盘出现“解锁（保底入口）”', ok: ms.trayLabels.includes('解锁（保底入口）') });
+
+    // 锁定态：光标落在宠物实体像素上也整窗穿透
+    const probe = `(() => {
+      const T = window.__petTest;
+      const s = T.state(); const p = s.pet;
+      let solid = null;
+      outer:
+      for (let dy = -10; dy <= 10; dy++) {
+        for (let dx = -10; dx <= 10; dx++) {
+          const x = p.x + Math.round(p.anchor.x) + dx;
+          const y = p.y + Math.round(p.anchor.y) + dy;
+          if (T.isInteractableAt(x, y)) { solid = { x, y }; break outer; }
+        }
+      }
+      if (!solid) return null;
+      T.setCursorContent(solid.x, solid.y);
+      return { ignore: T.ignoreNow(), interactive: T.state().interactive };
+    })()`;
+    const lockedHit = await js(probe);
+    results.push({ name: '锁定态实体像素上也整窗穿透', ok: !!lockedHit && lockedHit.ignore === true && lockedHit.interactive === false });
+
+    // 解锁：恢复常规置顶 + 穿透语义 + 托盘文本
+    await js('window.__petTest.toggleLock()');
+    await sleep(200);
+    ms = mainState();
+    results.push({ name: `解锁恢复常规置顶(level=${ms.lockLevel})`, ok: ms.locked === false && ms.lockLevel === 'floating' });
+    results.push({ name: '托盘文本为“锁定并保持始终置于顶层”', ok: ms.trayLabels.includes('锁定并保持始终置于顶层') });
+    const unlockedHit = await js(probe);
+    results.push({ name: '解锁后实体像素恢复可交互', ok: !!unlockedHit && unlockedHit.ignore === false && unlockedHit.interactive === true });
+
+    return assertMap(results);
+  },
+
   /** 抛掷物理：注入速度→宠物真实飞动并最终落地回待机。 */
   async dragPhysics(ctx) {
     const { js, sleep } = ctx;

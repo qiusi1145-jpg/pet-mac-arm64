@@ -45,6 +45,7 @@ class PetApp {
     this.assetsDir = path.join(app.getPath('userData'), 'assets');
     this.region = null;           // 屏幕坐标区域
     this.locked = false;
+    this.lockLevel = 'floating';  // 当前置顶级别：锁定='screen-saver'，解锁='floating'
     this.visible = true;
     this.ignore = true;
     this.consoleErrors = [];
@@ -147,6 +148,9 @@ class PetApp {
       }
     });
     this.win.setAlwaysOnTop(true, 'floating');
+    // 启动即处于锁定态（设置恢复）→ 直接用最高置顶级别
+    this.lockLevel = this.locked ? 'screen-saver' : 'floating';
+    this.win.setAlwaysOnTop(true, this.lockLevel);
     this.win.setIgnoreMouseEvents(true, { forward: true });
     this.win.on('closed', () => { this.win = null; });
     if (!this.consoleListenerAttached) {
@@ -186,6 +190,24 @@ class PetApp {
     }
   }
 
+  // 锁定统一入口：锁定 = 最高置顶级别（screen-saver）+ 整窗强制穿透；
+  // 解锁 = 恢复常规置顶（floating）与常规穿透判定。托盘是解锁保底入口。
+  setLocked(v) {
+    const next = !!v;
+    if (next !== this.locked) {
+      this.locked = next;
+      this.store.update({ locked: next }).saveSoon();
+      if (this.win && !this.win.isDestroyed()) {
+        this.lockLevel = next ? 'screen-saver' : 'floating';
+        this.win.setAlwaysOnTop(true, this.lockLevel);
+        this.win.setIgnoreMouseEvents(next, { forward: true });
+        this.ignore = next; // 直接设置过穿透态，同步缓存
+      }
+    }
+    this.rebuildTray();
+    if (this.win && !this.win.isDestroyed()) this.win.webContents.send('lock:change', { locked: this.locked });
+  }
+
   /* ---------------- IPC ---------------- */
 
   setupIpc() {
@@ -205,12 +227,7 @@ class PetApp {
     });
 
     ipcMain.on('win:setIgnore', (_e, v) => this.setIgnore(Boolean(v)));
-    ipcMain.on('ui:lock', (_e, locked) => {
-      this.locked = Boolean(locked);
-      this.store.update({ locked: this.locked }).saveSoon();
-      this.setIgnore(this.locked ? true : this.ignore);
-      this.rebuildTray();
-    });
+    ipcMain.on('ui:lock', (_e, locked) => this.setLocked(Boolean(locked)));
 
     // 资产导入与读取
     ipcMain.handle('file:pickPet', async () => this.pickFile('宠物图片', PET_IMG_FILTERS));
@@ -369,15 +386,8 @@ class PetApp {
     const menu = Menu.buildFromTemplate([
       { label: this.visible ? '隐藏宠物' : '显示宠物', click: () => { if (self.visible) self.hideWindow(); else self.showWindow(); } },
       {
-        label: this.locked ? '解锁（保底入口）' : '锁定',
-        click: () => {
-          const next = !self.locked;
-          self.locked = next;
-          self.store.update({ locked: next }).saveSoon();
-          self.setIgnore(true);
-          self.rebuildTray();
-          if (self.win && !self.win.isDestroyed()) self.win.webContents.send('lock:change', { locked: next });
-        },
+        label: this.locked ? '解锁（保底入口）' : '锁定并保持始终置于顶层',
+        click: () => self.setLocked(!self.locked),
       },
       {
         label: '窗口顶沿吸附', type: 'checkbox', checked: this.store.get().snapEnabled !== false,
@@ -409,6 +419,7 @@ class PetApp {
       { label: '退出', click: () => self.quit() },
     ]);
     this.tray.setContextMenu(menu);
+    this._trayMenuItems = menu.items.map((i) => i.label); // 供 UI 场景断言托盘文本
   }
 
   // 发送渲染层可执行的动作 / 事件（窗口可能隐藏 → 先显示）
@@ -511,14 +522,11 @@ class PetApp {
     if (!w || w.isDestroyed()) return;
     const wasLocked = this.locked;
     if (wasLocked) {
-      // 选择器是明确的手动交互任务 → 若处于锁定态先解锁，否则整窗穿透点不到面板
-      this.locked = false;
-      this.store.update({ locked: false }).saveSoon();
-      this.rebuildTray();
+      // 选择器是明确的手动交互任务 → 若处于锁定态先解锁（恢复正常置顶层级与穿透），否则整窗穿透点不到面板
+      this.setLocked(false);
     }
     this.showIfHidden();
     const wc = w.webContents;
-    if (wasLocked) wc.send('lock:change', { locked: false });
     const k = kind === 'bg' ? 'bg' : kind === 'audio' ? 'audio' : 'pet';
     wc.send('ui:openPicker', { kind: k });
   }
@@ -604,6 +612,28 @@ class PetApp {
       const ctx = {
         js: (expr) => wc.executeJavaScript(expr),
         sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+        // 主进程侧状态（锁定层级/托盘文本/持久化数据），供新功能场景断言
+        mainState: () => ({
+          locked: this.locked,
+          lockLevel: this.lockLevel,
+          trayLabels: this._trayMenuItems || [],
+          todos: this.store.get().todos,
+          chatRules: this.store.get().chatRules,
+          visible: this.visible,
+        }),
+        // 主进程动作（菜单项等价路径）
+        checkDueTodos: () => this.checkDueTodos(),
+        triggerReminderNow: () => this.triggerReminderNow(),
+        openTodo: () => this.openTodoWindow(),
+        openChat: () => this.openChatWindow(),
+        openChatSettings: () => this.openChatSettingsWindow(),
+        // 独立窗口驱动（待办/聊天）
+        waitForWin: (name, timeoutMs = 8000) => this.waitForScenarioWin(name, timeoutMs),
+        execIn: (name, expr) => {
+          const w = this[name];
+          if (!w || w.isDestroyed()) throw new Error(`窗口未打开: ${name}`);
+          return w.webContents.executeJavaScript(expr);
+        },
       };
       const passed = await sc(ctx);
       const errCount = this.consoleErrors.length;
@@ -616,6 +646,19 @@ class PetApp {
   }
 
   /* ---------------- 冒烟 ---------------- */
+
+  /** UI 场景驱动：等待某个独立窗口（todoWin/chatWin…）创建且页面可执行 JS。 */
+  async waitForScenarioWin(name, timeoutMs = 8000) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const w = this[name];
+      if (w && !w.isDestroyed()) {
+        try { await w.webContents.executeJavaScript('1'); return true; } catch { /* 页面尚未就绪 */ }
+      }
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    throw new Error(`等待窗口超时: ${name}`);
+  }
 
   async runSmoke() {
     try {
