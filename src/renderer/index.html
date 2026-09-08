@@ -62,12 +62,12 @@
     #pill.collapsed .dot { display: inline; }
     #pill.low { box-shadow: 0 0 0 1px rgba(255,80,80,.8); }
 
-    /* 通用气泡（启动问候 / 待办提醒 / 聊天回复） */
+    /* 通用气泡（启动问候 / 待办提醒 / 随机催促 / 聊天回复） */
     #bubble { position: absolute; z-index: 9; display: none; max-width: min(260px, calc(100% - 12px));
       padding: 8px 12px; border-radius: 10px; background: rgba(20,20,20,.72);
       color: #fff; font: 13px/1.5 "Microsoft YaHei", sans-serif;
       box-shadow: 0 4px 16px rgba(0,0,0,.22); pointer-events: none; }
-    #bubble.show { display: block; }
+    #bubble.show { display: block; pointer-events: auto; cursor: pointer; }
 
     /* 区域设置面板（Phase 4） */
     #panel { position: absolute; right: 8px; top: 8px; z-index: 7; display: none;

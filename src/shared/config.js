@@ -246,6 +246,43 @@ const CFG = {
     minDurationMs: 90,
     maxDurationMs: 210,
   },
+
+  /* ---------- 待办清单 ---------- */
+  todo: {
+    // 后台检查“未完成且已到截止时间”待办的间隔（ms）。
+    checkIntervalMs: 30 * 1000,
+    // 到期提醒气泡停留时长（ms）。
+    remindDurationMs: 5000,
+    // 到期提醒模板（{task} 会被替换为待办内容）。
+    remindTemplate: '主人，该做“{task}”了！',
+  },
+
+  /* ---------- 随机催促待办（♥ 重要待办） ---------- */
+  reminder: {
+    // 触发间隔在 min~max 之间随机（概率性，不是固定间隔）。
+    minIntervalMs: 25 * 60 * 1000,
+    maxIntervalMs: 30 * 60 * 1000,
+    // 剩余时间 ≤ soonMs 的 ♥ 待办，被选中权重 × soonWeight。
+    soonMs: 60 * 60 * 1000,
+    soonWeight: 2,
+    // 剩余时间 ≤ urgentMs（或已过期）权重 × urgentWeight（大幅提升）。
+    urgentMs: 10 * 60 * 1000,
+    urgentWeight: 10,
+    // 催促气泡停留时长（ms）。
+    durationMs: 8000,
+    // 催促模板（{task} 会被替换为待办内容）。
+    template: "主人，'{task}' 做完了吗？",
+  },
+
+  /* ---------- 聊天 ---------- */
+  chat: {
+    windowWidth: 400,
+    windowHeight: 540,
+    settingsWidth: 460,
+    settingsHeight: 500,
+    // 桌宠在主窗口回复气泡的停留时长（ms）。
+    bubbleDurationMs: 5000,
+  },
 };
 
 deepFreeze(CFG);

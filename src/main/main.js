@@ -14,6 +14,7 @@ const path = require('path');
 const fs = require('fs');
 const { CFG } = require('../shared/config');
 const { computeRegion, defaultRegionSettings } = require('../shared/region');
+const { findDueTodos, formatTask, normalizeTodo } = require('../shared/todo');
 const { Store } = require('./store');
 const { WinEnum, isSystemWindow } = require('./winenum');
 
@@ -52,6 +53,9 @@ class PetApp {
     this.consoleListenerAttached = false;
     this.quitNow = false;
     this.initPromise = null;
+    this.todoWin = null;          // 待办清单窗口
+    this.todoTimer = 0;           // 到期检查定时器
+    this.remindedTodoIds = new Set(); // 已提醒过的到期待办（本次运行内不重复弹）
   }
 
   async init() {
@@ -85,6 +89,7 @@ class PetApp {
     this.setupIpc();
     this.createTray();
     this.startCursorPush();
+    this.startTodoChecker();
     log('ipc/tray/cursor up');
 
     if (process.env.PET_SMOKE) {
@@ -248,6 +253,12 @@ class PetApp {
 
     ipcMain.on('settings:save', (_e, patch) => { this.store.update(patch).saveSoon(); });
 
+    // 待办清单（独立窗口；数据持久化在 settings.json 的 todos 字段）
+    ipcMain.handle('todo:load', () => this.store.get().todos || []);
+    ipcMain.handle('todo:add', (_e, t) => this.todoAdd(t));
+    ipcMain.handle('todo:update', (_e, id, patch) => this.todoUpdate(id, patch));
+    ipcMain.handle('todo:remove', (_e, id) => this.todoRemove(id));
+
     // 右键长按触发的 Windows 风格主菜单（Phase 4）
     ipcMain.on('menu:open', () => this.popupMainMenu());
 
@@ -355,6 +366,83 @@ class PetApp {
     return { regionScreen: { ...this.region } };
   }
 
+  /* ---------------- 待办清单 ---------------- */
+
+  /** 打开（或聚焦）待办清单窗口：普通不透明窗口、可调整大小。 */
+  openTodoWindow() {
+    if (this.todoWin && !this.todoWin.isDestroyed()) { this.todoWin.show(); return; }
+    const w = new BrowserWindow({
+      title: '待办清单',
+      width: 440,
+      height: 560,
+      resizable: true,
+      minimizable: true,
+      maximizable: false,
+      fullscreenable: false,
+      webPreferences: {
+        nodeIntegration: true,
+        contextIsolation: false,
+        sandbox: false,
+        backgroundThrottling: false,
+        spellcheck: false, // 同主窗：避免 Windows 拼写检查在 cwd 产生乱码目录
+      },
+    });
+    this.todoWin = w;
+    w.setMenu(null);
+    w.loadFile(path.join(__dirname, '..', 'renderer', 'todo.html'));
+    w.on('closed', () => { if (this.todoWin === w) this.todoWin = null; });
+  }
+
+  /** 待办数据变化 → 推送给待办窗口刷新。 */
+  todoChanged() {
+    if (this.todoWin && !this.todoWin.isDestroyed()) {
+      this.todoWin.webContents.send('todo:changed', { todos: this.store.get().todos });
+    }
+  }
+
+  todoAdd(t) {
+    const n = normalizeTodo(t);
+    const todos = (this.store.get().todos || []).slice();
+    if (n) todos.push(n);
+    this.store.update({ todos }).saveNow();
+    this.todoChanged();
+    return todos;
+  }
+
+  todoUpdate(id, patch) {
+    const todos = (this.store.get().todos || []).map((t) => {
+      if (t.id !== id) return t;
+      return normalizeTodo({ ...t, ...patch }) || t;
+    });
+    this.store.update({ todos }).saveNow();
+    this.todoChanged();
+    return todos;
+  }
+
+  todoRemove(id) {
+    const todos = (this.store.get().todos || []).filter((t) => t.id !== id);
+    this.store.update({ todos }).saveNow();
+    this.todoChanged();
+    return todos;
+  }
+
+  /** 每 30s 检查：未完成且已到截止时间的待办 → 桌宠气泡提醒（每条只提醒一次）。 */
+  startTodoChecker() {
+    if (this.todoTimer) return;
+    this.todoTimer = setInterval(() => this.checkDueTodos(), CFG.todo.checkIntervalMs);
+  }
+
+  checkDueTodos() {
+    const now = Date.now();
+    const due = findDueTodos(this.store.get().todos || [], now)
+      .filter((t) => !this.remindedTodoIds.has(t.id));
+    if (!due.length) return;
+    for (const t of due) this.remindedTodoIds.add(t.id);
+    const text = formatTask(CFG.todo.remindTemplate, due[0].text);
+    this.showIfHidden(); // 到期提醒需要用户看见 → 隐藏时先显示
+    this.send('bubble:todo', { text, ms: CFG.todo.remindDurationMs });
+  }
+
   /* ---------------- 托盘 ---------------- */
 
   createTray() {
@@ -444,6 +532,7 @@ class PetApp {
     const template = [
       { label: '休息', click: () => self.act('rest') },
       { label: '喂食', click: () => self.act('feed') },
+      { label: '待办…', click: () => self.openTodoWindow() },
       {
         label: `音乐${playlist.length ? `（${playlist.length}）` : ''}`,
         submenu: [

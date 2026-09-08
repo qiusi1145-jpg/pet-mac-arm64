@@ -4,6 +4,8 @@
  * 保证落盘与读盘字段一致。真正的文件读写只在主进程（store.js）做。
  */
 const { CFG } = require('./config');
+const { normalizeTodos } = require('./todo');
+const { normalizeChatRules } = require('./chat');
 
 function defaultSettings() {
   return {
@@ -26,6 +28,10 @@ function defaultSettings() {
     snapEnabled: true,
     // 是否允许物理模拟（甩动抛掷 / 失去支撑坠落）；关闭后人物拖到哪停在哪，但吸附仍工作。
     physicsEnabled: true,
+    // 待办清单
+    todos: [], // [{id,text,due,done,important}]
+    // 聊天回复规则
+    chatRules: [], // [{keyword,reply}]
   };
 }
 
@@ -66,6 +72,8 @@ function normalizeSettings(raw) {
   out.pillCollapsed = !!raw.pillCollapsed;
   out.snapEnabled = raw.snapEnabled !== false;
   out.physicsEnabled = raw.physicsEnabled !== false;
+  out.todos = normalizeTodos(raw.todos);
+  out.chatRules = normalizeChatRules(raw.chatRules);
   return out;
 }
 

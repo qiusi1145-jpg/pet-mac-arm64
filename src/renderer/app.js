@@ -276,14 +276,17 @@ function showBubble(text, durationMs) {
   const p = app.pet;
   bubbleEl.style.left = `${clamp(p.pos.x + p.anchor.x - bubbleEl.offsetWidth / 2, 6, Math.max(6, app.worldW - bubbleEl.offsetWidth - 6))}px`;
   bubbleEl.style.top = `${clamp(p.pos.y - bubbleEl.offsetHeight - 8, 6, Math.max(6, app.worldH - bubbleEl.offsetHeight - 6))}px`;
+  updateUiRects(); // 气泡参与命中判定：指针在其上窗口可交互（可点击关闭）
   if (app.bubbleTimer) clearTimeout(app.bubbleTimer);
   app.bubbleTimer = setTimeout(hideBubble, Math.max(0, durationMs ?? CFG.greeting.durationMs));
 }
 
 function hideBubble() {
   if (!bubbleEl) return;
+  if (!bubbleEl.classList.contains('show')) return;
   bubbleEl.classList.remove('show');
   if (app.bubbleTimer) { clearTimeout(app.bubbleTimer); app.bubbleTimer = null; }
+  updateUiRects();
 }
 
 function setBlinkVisible(v) {
@@ -556,6 +559,8 @@ function toggleLock() {
 /* ================= 事件绑定 ================= */
 
 window.addEventListener('mousedown', (e) => {
+  // 气泡（问候/提醒/催促）：点击任意位置提前关闭
+  if (bubbleEl && bubbleEl.classList.contains('show')) hideBubble();
   app.buttonDown = true;
   if (!app.locked && (e.button === 0 || e.button === 2) && !isOverUiRect(contentOf(e))) beginPress(e);
   syncHitTest();
@@ -623,6 +628,10 @@ function bindIpc() {
   ipcRenderer.on('ui:openRegionEditor', () => openRegionEditor());
   ipcRenderer.on('ui:openPicker', (_e, { kind }) => openPetPicker(kind));
   ipcRenderer.on('state:toggle', () => toggleStateVisual());
+  // ---- 气泡类：启动问候之外的待办提醒 / 随机催促 / 聊天回复 ----
+  ipcRenderer.on('bubble:todo', (_e, { text, ms }) => showBubble(text, ms));
+  ipcRenderer.on('bubble:reminder', (_e, { text, ms }) => showBubble(text, ms));
+  ipcRenderer.on('bubble:chat', (_e, { text, ms }) => showBubble(text, ms));
   // 原生右键菜单关闭后：清掉可能残留的按键/手势态（修复“菜单选完人物被吸到鼠标”）
   ipcRenderer.on('menu:closed', () => cleanupMenuGesture());
   // 吸附开关同步（托盘）
@@ -673,6 +682,9 @@ pillEl.addEventListener('click', () => {
   ipcRenderer.send('settings:save', { pillCollapsed: pillEl.classList.contains('collapsed') });
   updateUiRects();
 });
+
+// 气泡本体点击关闭（窗口级 mousedown 已兜底“点任意位置关闭”）
+bubbleEl.addEventListener('click', hideBubble);
 
 /* ================= Phase 4：状态 / 背景 / BGM / 区域 ================= */
 

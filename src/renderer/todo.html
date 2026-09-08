@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta
+    http-equiv="Content-Security-Policy"
+    content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:"
+  />
+  <title>待办清单</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #fafafa; color: #222;
+      font: 13px/1.6 "Microsoft YaHei", sans-serif; user-select: none; -webkit-user-select: none; }
+    body { display: flex; flex-direction: column; box-sizing: border-box; padding: 12px 14px; }
+    header { display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; }
+    header h1 { font-size: 16px; margin: 0; }
+    header #count { color: #888; font-size: 12px; }
+    #addRow { display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+      padding: 8px; border: 1px solid #e0e0e0; border-radius: 8px; background: #fff; }
+    #text { flex: 1 1 100%; font: 13px/1.6 "Microsoft YaHei"; padding: 4px 8px;
+      border: 1px solid #ccc; border-radius: 6px; }
+    #addRow label { display: flex; align-items: center; gap: 4px; color: #555; font-size: 12px; }
+    #due { font: 12px/1.4 "Microsoft YaHei"; border: 1px solid #ccc; border-radius: 6px; padding: 2px 4px; }
+    button { font: 12px/1.6 "Microsoft YaHei"; padding: 3px 12px; border-radius: 6px;
+      border: 1px solid #bbb; background: #f2f2f2; cursor: pointer; }
+    button:hover { background: #e5f1fb; }
+    button.primary { background: #2f9bff; border-color: #1b7fdd; color: #fff; font-weight: 700; }
+    button.primary:hover { background: #1f8aef; }
+    #list { flex: 1 1 auto; overflow: auto; margin-top: 8px; }
+    .row { display: flex; align-items: flex-start; gap: 8px; padding: 7px 9px;
+      border: 1px solid #e6e6e6; border-radius: 8px; background: #fff; margin-bottom: 6px; }
+    .row .doneCk { margin-top: 3px; }
+    .row .body { flex: 1 1 auto; min-width: 0; }
+    .row .txt { word-break: break-all; white-space: pre-wrap; }
+    .row.done .txt { text-decoration: line-through; color: #aaa; }
+    .row .meta { font-size: 11px; color: #999; }
+    .row .meta.overdue { color: #e05555; font-weight: 700; }
+    .row .impBtn { border: none; background: none; font-size: 15px; color: #e05585; padding: 0 4px; }
+    .row .impBtn.off { color: #c8c8c8; }
+    .row .delBtn { border: none; background: none; color: #999; font-size: 13px; padding: 0 4px; }
+    .row .delBtn:hover { color: #e05555; }
+    .empty { color: #aaa; text-align: center; padding: 30px 0; }
+  </style>
+</head>
+<body>
+  <header><h1>待办清单</h1><span id="count"></span></header>
+  <section id="addRow">
+    <input id="text" type="text" maxlength="200" placeholder="要做点什么？（Enter 添加）" spellcheck="false" />
+    <label class="imp"><input id="important" type="checkbox" />♥ 重要</label>
+    <label class="due">截止 <input id="due" type="datetime-local" /></label>
+    <button id="addBtn" class="primary">添加</button>
+  </section>
+  <main id="list"></main>
+  <script src="./todo.js"></script>
+</body>
+</html>

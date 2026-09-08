@@ -194,6 +194,78 @@ const scenarios = {
     return assertMap(results);
   },
 
+  /**
+   * 待办清单（功能 3）：打开独立待办窗口 → 真实 DOM 添加（含截止时间/♥）→ 列表渲染 →
+   * 持久化到 settings → 到期待办触发检查 → 主窗气泡“主人，该做…”→ 完成划线 → 删除。
+   */
+  async todo(ctx) {
+    const { js, sleep, execIn, waitForWin, mainState } = ctx;
+    await waitFor(js, 'window.__petReady && window.__petState().petLoaded', 12000, 'renderer ready + pet');
+    const results = [];
+
+    ctx.openTodo();
+    await waitForWin('todoWin');
+    const dueValue = (offsetMs) => `(() => {
+      const d = new Date(Date.now() + ${offsetMs});
+      const pad = (n) => String(n).padStart(2, '0');
+      document.getElementById('due').value =
+        d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+    })()`;
+
+    // ① 添加：未来截止 + ♥
+    await execIn('todoWin', `document.getElementById('text').value = '写周报'`);
+    await execIn('todoWin', dueValue(2 * 60 * 1000));
+    await execIn('todoWin', `document.getElementById('important').checked = true`);
+    await execIn('todoWin', `document.getElementById('addBtn').click()`);
+    await sleep(200);
+    const rowsExpr = `Array.from(document.querySelectorAll('#list .row')).map((r) => ({
+      txt: r.querySelector('.txt').textContent,
+      imp: r.querySelector('.impBtn').textContent === '♥',
+      done: r.classList.contains('done'),
+    }))`;
+    let rows = await execIn('todoWin', rowsExpr);
+    results.push({ name: `添加待办并渲染(${JSON.stringify(rows[0] || null)})`, ok: rows.length === 1 && rows[0].txt === '写周报' && rows[0].imp === true && rows[0].done === false });
+
+    // ② 持久化：settings.json 的 todos 字段（id/text/due/important 齐全）
+    let st = mainState();
+    results.push({
+      name: '待办持久化到 settings',
+      ok: Array.isArray(st.todos) && st.todos.length === 1 &&
+        st.todos[0].text === '写周报' && st.todos[0].important === true && st.todos[0].due != null,
+    });
+
+    // ③ 到期待办 → 主进程检查 → 主窗气泡（真实 checkDueTodos 路径）
+    await execIn('todoWin', `document.getElementById('text').value = '取快递'`);
+    await execIn('todoWin', dueValue(-1000));
+    await execIn('todoWin', `document.getElementById('addBtn').click()`);
+    await sleep(200);
+    ctx.checkDueTodos();
+    await waitFor(js, `document.getElementById('bubble').classList.contains('show') && document.getElementById('bubble').textContent.includes('取快递')`, 5000, '到期气泡出现');
+    results.push({ name: '到期待办弹出“主人，该做…”气泡', ok: true });
+
+    // ④ 点击气泡可关闭
+    await js(`document.getElementById('bubble').click()`);
+    await sleep(80);
+    const bubbleGone = await js(`!document.getElementById('bubble').classList.contains('show')`);
+    results.push({ name: '点击气泡关闭', ok: bubbleGone === true });
+
+    // ⑤ 标记完成 → 划线
+    await execIn('todoWin', `document.querySelector('#list .row .doneCk').click()`);
+    await sleep(200);
+    rows = await execIn('todoWin', rowsExpr);
+    st = mainState();
+    results.push({ name: `标记完成划线(done=${rows[0].done})`, ok: rows[0].done === true && st.todos[0].done === true });
+
+    // ⑥ 删除
+    await execIn('todoWin', `document.querySelector('#list .row .delBtn').click()`);
+    await sleep(200);
+    rows = await execIn('todoWin', rowsExpr);
+    st = mainState();
+    results.push({ name: `删除待办(剩 ${rows.length} 行)`, ok: rows.length === 1 && rows[0].txt === '取快递' && st.todos.length === 1 });
+
+    return assertMap(results);
+  },
+
   /** 抛掷物理：注入速度→宠物真实飞动并最终落地回待机。 */
   async dragPhysics(ctx) {
     const { js, sleep } = ctx;
