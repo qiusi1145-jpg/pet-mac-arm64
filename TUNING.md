@@ -48,7 +48,7 @@
 | `restitution` | 0.62 | 撞到区域边界的弹性（1=完全弹，0=不弹） | 调大 → 弹得更欢 |
 | `stopSpeedX` / `stopSpeedY` | 26 / 40 | 贴地后水平/竖直速度低于该值视为“稳定” | 越大停得越快 |
 | `settleMs` | 300 | 稳定后缓冲多久才回待机 | |
-| `snapProximityY` | 60 | 锚点距窗口顶沿多近才吸附（竖直） | 调大 → 更容易吸附 |
+| `snapProximityY` | 120 | 锚点距窗口顶沿多近才吸附（竖直） | 2026-09-08 按需求较最初的 60 翻倍，更容易吸附 |
 | `snapMarginX` | 10 | 锚点水平超出窗口左右允许余量 | |
 | `snapMaxSpeed` | 220 | 释放速度低于它才尝试吸附 | 调大 → 稍快也能吸上 |
 | `groundDrag` | 1.8 | 贴地滚动额外摩擦 | 越大滚两下就停 |
@@ -90,6 +90,47 @@
 | `blinkPeriodMs` | 3000 | 透明度 25%↔75% 正弦往返一个完整周期 | 越小闪得越快；数值见下方上下限 |
 | `opacityMin` / `opacityMax` | 0.25 / 0.75 | 闪烁透明度下限/上限 | 规格：在 25% ↔ 75% 间缓慢正弦渐变 |
 | `energyRefill` | 100 | 结束时体力回满到的值 | 夹 0-100 |
+
+## `greeting` —— 启动问候（2026-09-08 新增）
+
+| 参数 | 默认 | 作用 | 说明 |
+| --- | --- | --- | --- |
+| `greetings` | 8 条中文问候 | 每次启动随机选一条弹出 | 数组，可自由增删改（用户常改项） |
+| `delayMs` | 500 | 宠物就位后多久弹问候 | |
+| `durationMs` | 5000 | 问候气泡停留时长 | 点击任意位置可提前关 |
+
+## `blink` —— 眨眼（2026-09-08 新增）
+
+| 参数 | 默认 | 作用 | 说明 |
+| --- | --- | --- | --- |
+| `minIntervalMs` / `maxIntervalMs` | 2800 / 6200 | 两次眨眼间隔的随机区间 | 闭眼图固定 `src/assets/blink.png`，与参数无关 |
+| `minDurationMs` / `maxDurationMs` | 90 / 210 | 单次闭眼时长的随机区间 | 太长会像“睡着了” |
+
+## `todo` —— 待办清单（2026-09-08 新增）
+
+| 参数 | 默认 | 作用 | 说明 |
+| --- | --- | --- | --- |
+| `checkIntervalMs` | 30000 | 后台检查到期待办的间隔 | |
+| `remindDurationMs` | 5000 | 到期提醒气泡停留时长 | 点击可提前关 |
+| `remindTemplate` | 主人，该做“{task}”了！ | 到期提醒文案模板 | `{task}` 替换为待办内容（用户常改项） |
+
+## `reminder` —— 随机催促（♥ 待办，2026-09-08 新增）
+
+| 参数 | 默认 | 作用 | 说明 |
+| --- | --- | --- | --- |
+| `minIntervalMs` / `maxIntervalMs` | 25min / 30min | 催促触发间隔的随机区间 | 概率性，非固定间隔 |
+| `soonMs` / `soonWeight` | 1h / 2 | 剩余 ≤1h 的 ♥ 待办权重倍数 | 越临近越容易被选中 |
+| `urgentMs` / `urgentWeight` | 10min / 10 | 剩余 ≤10min（或已过期）的权重倍数 | “大幅提升”档 |
+| `durationMs` | 8000 | 催促气泡停留时长 | |
+| `template` | 主人，'{task}' 做完了吗？ | 催促文案模板 | `{task}` 替换（用户常改项） |
+
+## `chat` —— 聊天（2026-09-08 新增）
+
+| 参数 | 默认 | 作用 | 说明 |
+| --- | --- | --- | --- |
+| `windowWidth` / `windowHeight` | 400 / 540 | 聊天窗口初始尺寸 | 可调整大小 |
+| `settingsWidth` / `settingsHeight` | 460 / 500 | 聊天设置窗口初始尺寸 | |
+| `bubbleDurationMs` | 5000 | 桌宠回复在主窗气泡的停留时长 | |
 
 ## 行为开关（托盘勾选，持久化在 settings.json，不走 CFG）
 
@@ -134,3 +175,13 @@
   恢复不透明”——改默认值不会破坏该显式断言，但改了默认上下限别忘同步场景里“从下限附近起”的假设。
 - 物理开关（`settings.physicsEnabled`，默认开）：默认开时 snap/dragPhysics 两个 UI 场景行为不变；
   关闭的语义由 UI 场景 `physOff` 锁定（不抛不落、仍可吸附、吸附解除不坠落）。
+- `greeting.*`：UI 场景 `greeting` 断言“气泡出现且文本 ∈ `greeting.greetings`”——删空数组会让场景失败；
+  改 `delayMs` 过大（>3s）会撞场景 3s 等待上限。
+- `blink.*`：UI 场景 `blink` 用 `forceBlink` 驱动、不依赖随机区间，改区间不破坏场景；
+  单测 `blink.test.js` 只断言“落在区间内”，区间改得合法即可。
+- `todo.checkIntervalMs`：UI 场景 `todo` 手动调 `checkDueTodos()`，不依赖 30s 间隔；改小会加快真实提醒频率。
+- `reminder.soonMs/urgentMs/soonWeight/urgentWeight`：`todo.test.js` 有加权选择的确定性用例
+  （rng 注入，权重 10/2/1 的落点断言）——改权重或阈值需同步这些断言；
+  `randomReminderDelay` 的区间断言锁在 25~30min。
+- `chat.bubbleDurationMs`：UI 场景 `chat` 断言气泡出现后立即手动关闭，不依赖时长；改小无碍。
+- **新增窗口必须 `spellcheck:false`**：否则 Chromium Windows 拼写检查会在 cwd 产生乱码垃圾目录（复发过一次）。

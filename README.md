@@ -3,8 +3,13 @@
 一个跑在 Windows 系统托盘上的桌面宠物：上传一张透明 PNG，摸头、喂食、扔出去在屏幕上弹跳、
 还能吸附到其它窗口顶沿挂着；累了点右键菜单「休息」——透明度在 25%↔75% 间缓缓正弦渐变 30 秒后
 体力回满；背景图贴地铺在人物后面、随人物走动居中；本地音乐加入播放列表循环播放。
+还有**启动问候、随机眨眼、一键切换状态图、待办清单（到期提醒 + ♥ 待办随机催促）、
+自定义关键词聊天**。
 **像素级点击穿透**——宠物是透明像素的地方，鼠标能直接点到桌面/其它程序，
 只有实心像素可以交互。纯 Electron，无第三方运行库、无原生 Node 模块（窗口枚举用编译好的 C# 小程序）。
+
+> 功能现状速查：**正在运行的功能说明.md**（逐行对源码整理，2026-09-08 版）。
+> 用户视角使用说明：**USAGE_GUIDE.md**。调参：**TUNING.md**。
 
 ## 运行
 
@@ -30,10 +35,12 @@ npm start          # 启动桌宠
 | 按住宠物拖动 | 1:1 直接跟手（**无惯性/缓动/重力**） |
 | 快速甩动后松开 | 抛掷 → 重力/惯性/边界反弹/落地压扁（**托盘可关物理**） |
 | 低速在靠近窗口顶沿处松开 | 宠物**吸附**到那个窗口顶沿（挂在上沿） |
-| 左键按住 ≥ 3s | 锁定（整窗彻底点击穿透；呼吸动画照常）→ 再长按一次或托盘解锁 |
-| 右键按住 ≥ 1.5s | 弹出 Windows 风格主菜单（休息/喂食/音乐/背景/重置状态/更换宠物/退出） |
+| 左键按住 ≥ 3s | 锁定（最高置顶级 `'screen-saver'` + 整窗彻底点击穿透；呼吸动画照常）→ 再长按一次或托盘解锁 |
+| 右键按住 ≥ 1.5s | 弹出 Windows 风格主菜单（休息/喂食/**待办**/**聊天**/音乐/背景/**切换状态**/重置状态/更换宠物/退出） |
 | 右键菜单「休息」 | 透明度在 25%↔75% 间**缓慢正弦渐变**闪烁，30s 后停止、体力回满 |
-| 托盘图标 | 隐藏/显示、锁定/解锁（**解锁保底入口**）、吸附开关、**物理模拟开关**、主菜单、区域设置、更换宠物、退出 |
+| 托盘图标 | 隐藏/显示、**锁定并保持始终置于顶层**/解锁（**解锁保底入口**）、吸附开关、**物理模拟开关**、主菜单、更换宠物、区域设置、退出 |
+| 启动 | 宠物就位 0.5s 后头顶弹一句随机问候（8 条，`config.js greeting.greetings` 可改），5s 消失、点击提前关 |
+| 随机 | 每 2.8~6.2s 眨眼一次（闭眼图 = `src/assets/blink.png`，可替换同名文件） |
 
 任何“状态归零”（情绪/体力/饱食任一 ≤0）时，宠物会变成半透明；任一恢复到 >0 立即复原。
 启动时会按离线时长一次性结算；隐藏窗口期间也暂停计时并在恢复显示时结算。
@@ -56,6 +63,20 @@ npm start          # 启动桌宠
   `src/shared/config.js` 的 `audio.volumeDefault`（0.6）里改。
   > 注：自动化测试只能验证“加入列表 + 进入播放态”，**真实出声请人工确认**（见 MANUAL_CHECKLIST）。
 
+### 待办清单 / 随机催促 / 聊天（2026-09-08 新增）
+
+- **待办**：右键菜单「待办…」→ 独立窗口。添加（截止时间精确到分钟 + ♥ 重要）、完成划线、删除；
+  数据持久化。后台每 30s 检查，到期未完成 → 桌宠气泡“主人，该做‘xxx’了！”（5s，点击关闭）。
+- **随机催促**：平均 25~30 分钟随机一次，从 ♥ 待办里按紧迫度加权挑一条（越临近概率越高），
+  气泡“主人，‘xxx’ 做完了吗？”（8s）。锁定/隐藏时不催。
+- **聊天**：右键菜单「聊天 ▸ 聊天」开聊天窗、「聊天设置」配规则（关键词 → 回复，忽略大小写、
+  多命中取最长关键词）；没匹配上 → 桌宠被“点一下”（Q 弹 + 情绪变化）。规则持久化。
+
+### 眨眼 / 切换状态（占位图可直接替换）
+
+- 眨眼：每隔 2.8~6.2s 闭眼 90~210ms，闭眼图固定读 `src/assets/blink.png`——**替换同名文件即可**（需与主图同尺寸）。
+- 切换状态：右键菜单「切换状态」在主图与 `src/assets/state.png` 间来回切换（只改视觉，不影响判定与数值）。
+
 ## 玩法参数都收在哪
 
 全部可调参数集中在一个模块：`src/shared/config.js`（不可变对象），并在 **TUNING.md** 逐条说明。
@@ -74,21 +95,30 @@ src/
     status.js     状态系统（情绪/体力/饱食/好感度 + 离线结算 + 里程碑）
     pixel.js      位图分析与实体像素命中（判定唯一来源）
     region.js     活动区域 = 工作区减去任务栏（可缩放，底对齐 + 水平居中）
-    settings.js   持久化默认值与规范化
+    settings.js   持久化默认值与规范化（含 todos / chatRules）
+    blink.js      眨眼计划（间隔/时长随机区间，rng 可注入）
+    stateVisual.js 状态图显隐切换（纯视觉）
+    todo.js       待办清洗 / 到期判断 / 催促目标加权选择 / 模板替换
+    chat.js       聊天规则清洗 / 关键词匹配（忽略大小写、最长优先）
     util.js       小工具
   main/     主进程（Electron）
-    main.js      窗口/透明置顶/托盘/原生菜单/应用内选择器(换宠/背景/音乐)/点击穿透开关
+    main.js      窗口/透明置顶/托盘/原生菜单/应用内选择器/点击穿透开关/锁定置顶级/
+                 待办与催促定时器/聊天窗口与规则/到期检查
     store.js     settings.json 原子写入 + 防抖落盘
     winenum.js   枚举其它窗口（WinEnum.exe）用于吸附
-    uiScenarios.js  UI 自动化场景（executeJavaScript 驱动真实渲染层）
-  renderer/ 渲染层（一个透明窗口 == 活动区域）
-    index.html   DOM（背景层 #bg/宠物层/特效层/状态胶囊/区域面板/选择器/进度环）
-    app.js       主循环：光标命中判定 + 动画 + 物理 + 状态 + 背景布局 + BGM + IPC
-    boot.js      启动引导（测试开关）
+    uiScenarios.js  UI 自动化场景（executeJavaScript 驱动真实渲染层，含独立窗口驱动）
+  renderer/ 渲染层
+    index.html          宠物透明窗 DOM（背景/宠物/眨眼/状态图/特效/胶囊/气泡/面板/选择器）
+    app.js              主循环：命中判定 + 动画 + 物理 + 吸附 + 状态 + 背景 + BGM + 气泡 + IPC
+    boot.js             启动引导（测试开关）
+    todo.html / todo.js         待办清单窗口
+    chat.html / chat.js         聊天窗口
+    chatSettings.html / .js     聊天规则设置窗口
 test/
-  unit/          9 个纯函数测试文件（node --test）
+  unit/          13 个纯函数测试文件、82 个用例（node --test）
   smoke/         真实启动 Electron 的冒烟
-  ui/            真实渲染层的 11 个场景（anim/dragPhysics/snap/status/passthrough/picker/bg/menuClean/audio/physOff/rest）
+  ui/            真实渲染层的 18 个场景（greeting/blink/stateVisual/lock/todo/reminder/chat/anim/
+                 dragPhysics/snap/physOff/status/passthrough/picker/bg/menuClean/audio/rest）
   fixtures/      程序生成的 PNG 测试图（含宠物与背景图，供 UI 场景用）
 ```
 
@@ -105,9 +135,10 @@ test/
 ## 测试
 
 ```bash
-npm test               # 63 个纯函数单测
+npm test               # 82 个纯函数单测（13 个文件）
 npm run test:smoke     # 真实启动冒烟
-npm run test:ui        # 11 个渲染层场景（anim/dragPhysics/snap/status/passthrough/picker/bg/menuClean/audio/physOff/rest）
+npm run test:ui        # 18 个渲染层场景（greeting/blink/stateVisual/lock/todo/reminder/chat/anim/
+                       # dragPhysics/snap/physOff/status/passthrough/picker/bg/menuClean/audio/rest）
 PET_UI_ONLY='bg,audio' npm run test:ui   # 调试：只跑指定场景
 ```
 
