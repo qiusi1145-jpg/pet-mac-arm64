@@ -964,14 +964,18 @@ class PetApp {
     return this.openToolWindow('voiceSettingsWin', 'voiceSettings.html', '语音聊天设置', CFG.voice.settingsWidth, CFG.voice.settingsHeight);
   }
 
-  /** 标题栏应用图标：优先用当前桌宠形象（"换图即换图标"，与计划表装饰同源），回退内置素材。 */
+  /** 标题栏应用图标：程序内绘制的简单圆形色块（苹果蓝 #007aff，边缘抗锯齿），不依赖任何图片文件。 */
   windowIcon() {
-    try {
-      const p = this.resolvePetPath();
-      if (p && fs.existsSync(p)) return p;
-    } catch { /* 解析失败走回退 */ }
-    const fallback = path.join(__dirname, '..', 'assets', 'pet.png');
-    return fs.existsSync(fallback) ? fallback : undefined;
+    const size = 64, cx = 31.5, cy = 31.5, r = 25;
+    const bmp = [];
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        const d = Math.hypot(x - cx, y - cy);
+        const a = Math.max(0, Math.min(1, r + 0.5 - d)); // 1px 渐变边 → 抗锯齿
+        bmp.push(255, 122, 0, Math.round(a * 255)); // BGRA = #007aff
+      }
+    }
+    return nativeImage.createFromBitmap(Buffer.from(bmp), { width: size, height: size });
   }
 
   /**

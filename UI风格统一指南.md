@@ -63,7 +63,7 @@ orange/graphite，Apple 系统色系），用户在「通用设置」窗切换�
 ① `<link rel="stylesheet" href="./apple.css" />` 放在 `<style>` 之前；
 ② `<style>` 里颜色/圆角全部引用 `var(--xxx)`；字体用系统栈
    `-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif`；
-③ 标题栏图标：BrowserWindow 加 `icon: this.windowIcon()`（桌宠形象，换图即换图标）；
+③ 标题栏图标：BrowserWindow 加 `icon: this.windowIcon()`（程序内绘制的 64×64 圆形色块，苹果蓝 #007aff、抗锯齿，无图片文件依赖；改颜色只需动 `main.js windowIcon()` 里的 BGRA 三个值）；
 ④ 窗口尺寸登记进 `config.js`（**禁止在 main.js 硬编码**）；
 ⑤ 若涉及持久化字段：`shared/*.js` 纯函数白名单清洗 + `content.js defaultSettings/normalizeSettings`
    **双份同步** + 单测（参照 `shared/uiTheme.js` 与 `test/unit/uitheme.test.js`）；
