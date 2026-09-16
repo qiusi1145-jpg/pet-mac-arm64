@@ -7,46 +7,47 @@
     content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:"
   />
   <title>聊天</title>
+  <link rel="stylesheet" href="./tokens.css" />
   <style>
-    html, body { margin: 0; height: 100%; background: #fafafa; color: #222;
+    html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
       font: 13px/1.6 "Microsoft YaHei", sans-serif; user-select: none; -webkit-user-select: none; }
     body { display: flex; flex-direction: column; box-sizing: border-box; padding: 10px 12px; }
     #msgs { flex: 1 1 auto; overflow: auto; padding: 4px 2px; }
-    .msg { max-width: 78%; margin: 5px 0; padding: 6px 10px; border-radius: 10px;
+    .msg { max-width: 78%; margin: 5px 0; padding: 6px 10px; border-radius: var(--r-lg);
       word-break: break-all; white-space: pre-wrap; }
-    .msg.me { background: #2f9bff; color: #fff; margin-left: auto; }
-    .msg.pet { background: #ececec; color: #222; margin-right: auto; }
-    .msg.sys { background: none; color: #999; font-size: 11px; text-align: center;
+    .msg.me { background: var(--accent); color: var(--on-accent); margin-left: auto; }
+    .msg.pet { background: #ececec; color: var(--text); margin-right: auto; }
+    .msg.sys { background: none; color: var(--text-3); font-size: 11px; text-align: center;
       max-width: 100%; padding: 2px; }
     #inputRow { display: flex; gap: 6px; margin-top: 8px; }
     /* 语音"正在输入"实时条：在听 / 正在识别 / 实时字幕 + 电平条 */
     #live { display: flex; align-items: center; gap: 6px; margin-top: 8px; padding: 4px 8px;
-      border-radius: 8px; background: #eef6ff; border: 1px solid #cfe3f7; color: #2b5d8f;
+      border-radius: var(--r-md); background: var(--accent-weak); border: 1px solid #cfe0f2; color: #3a6c9c;
       font-size: 12px; }
     #live[hidden] { display: none; }
-    #live.busy { background: #fff5e6; border-color: #f0d5a8; color: #9a6417; }
+    #live.busy { background: var(--warn-bg); border-color: #ecd9b0; color: var(--warn); }
     #live .mic { flex: 0 0 auto; }
     #live .txt { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;
       white-space: nowrap; }
-    #live .bar { flex: 0 0 44px; height: 6px; border-radius: 3px; background: rgba(43,93,143,.18);
+    #live .bar { flex: 0 0 44px; height: 6px; border-radius: 3px; background: rgba(74, 144, 217, 0.18);
       overflow: hidden; }
-    #live .bar > i { display: block; height: 100%; width: 0; background: #2f9bff; }
-    #input { flex: 1 1 auto; font: 13px/1.6 "Microsoft YaHei"; padding: 5px 8px;
-      border: 1px solid #ccc; border-radius: 7px; }
+    #live .bar > i { display: block; height: 100%; width: 0; background: var(--accent); }
+    #input { flex: 1 1 auto; font: 13px/1.6 "Microsoft YaHei"; padding: 5px 8px; color: var(--text);
+      border: 1px solid var(--input-border); border-radius: var(--r-sm); }
     #sendBtn { flex: 0 0 auto; }
     /* 请求进行中才出现的「停止」（大模型可能要等几秒；点了立刻取消在途请求） */
-    #stopBtn { flex: 0 0 auto; background: #fff2f2; border-color: #e8b4b4; color: #c0392b; }
+    #stopBtn { flex: 0 0 auto; background: var(--bad-bg); border-color: #e8bcbc; color: var(--bad); }
     #stopBtn[hidden] { display: none; }
-    #micBtn { flex: 0 0 auto; background: #f2f2f2; color: #333; border-color: #bbb;
+    #micBtn { flex: 0 0 auto; background: var(--btn-bg); color: var(--text); border-color: var(--btn-border);
       font-weight: 400; padding: 4px 10px; }
-    #micBtn:hover { background: #e5f1fb; }
-    #micBtn.on { background: #e05555; border-color: #c23b3b; color: #fff; }
+    #micBtn:hover { background: var(--accent-weak); }
+    #micBtn.on { background: var(--bad); border-color: #b23c36; color: var(--on-accent); }
     /* 按住说话时：蓝色（区别于"对话中"的红色）。放在 .on 之后 → 同时命中时以"正在按"为准 */
-    #micBtn.hold { background: #2f9bff; border-color: #1b7fdd; color: #fff; }
+    #micBtn.hold { background: var(--accent); border-color: var(--accent-strong); color: var(--on-accent); }
     #micBtn[hidden] { display: none; }
-    button { font: 13px/1.6 "Microsoft YaHei"; padding: 4px 14px; border-radius: 7px;
-      border: 1px solid #1b7fdd; background: #2f9bff; color: #fff; font-weight: 700; cursor: pointer; }
-    button:hover { background: #1f8aef; }
+    button { font: 13px/1.6 "Microsoft YaHei"; padding: 4px 14px; border-radius: var(--r-sm);
+      border: 1px solid var(--accent-strong); background: var(--accent); color: var(--on-accent); font-weight: 700; cursor: pointer; }
+    button:hover { background: var(--accent-strong); }
   </style>
 </head>
 <body>

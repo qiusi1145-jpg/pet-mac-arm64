@@ -720,8 +720,8 @@ class PetApp {
     if (this.todoWin && !this.todoWin.isDestroyed()) { this.todoWin.show(); return; }
     const w = new BrowserWindow({
       title: '待办清单',
-      width: 440,
-      height: 560,
+      width: CFG.todo.windowWidth,
+      height: CFG.todo.windowHeight,
       resizable: true,
       minimizable: true,
       maximizable: false,

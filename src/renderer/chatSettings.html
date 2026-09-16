@@ -7,67 +7,68 @@
     content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:"
   />
   <title>聊天设置</title>
+  <link rel="stylesheet" href="./tokens.css" />
   <style>
-    html, body { margin: 0; height: 100%; background: #fafafa; color: #222;
+    html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
       font: 13px/1.6 "Microsoft YaHei", sans-serif; user-select: none; -webkit-user-select: none; }
     body { display: flex; flex-direction: column; box-sizing: border-box; padding: 12px 14px; }
     header h1 { font-size: 15px; margin: 0 0 2px; }
-    header .tip { color: #888; font-size: 12px; margin-bottom: 8px; }
-    #engineBox { border: 1px solid #e0e0e0; border-radius: 8px; background: #fff;
+    header .tip { color: var(--text-3); font-size: 12px; margin-bottom: 8px; }
+    #engineBox { border: 1px solid var(--card-border); border-radius: var(--r-md); background: var(--card);
       padding: 8px 10px; margin-bottom: 10px; }
-    #engineBox .et { color: #2f6fb8; font-weight: 700; font-size: 13px; margin-bottom: 5px; }
+    #engineBox .et { color: var(--accent-strong); font-weight: 700; font-size: 13px; margin-bottom: 5px; }
     #engineBox select { width: 100%; font: 13px/1.6 "Microsoft YaHei"; padding: 3px 7px;
-      border: 1px solid #ccc; border-radius: 6px; background: #fff; }
-    #engineBox .eh { color: #999; font-size: 11px; margin: 5px 0 0; }
+      border: 1px solid var(--input-border); border-radius: var(--r-sm); background: var(--card); color: var(--text); }
+    #engineBox .eh { color: var(--text-3); font-size: 11px; margin: 5px 0 0; }
     #addRow { display: flex; flex-direction: column; gap: 6px; padding: 8px;
-      border: 1px solid #e0e0e0; border-radius: 8px; background: #fff; }
-    #addRow input { font: 13px/1.6 "Microsoft YaHei"; padding: 4px 8px;
-      border: 1px solid #ccc; border-radius: 6px; }
+      border: 1px solid var(--card-border); border-radius: var(--r-md); background: var(--card); }
+    #addRow input { font: 13px/1.6 "Microsoft YaHei"; padding: 4px 8px; color: var(--text);
+      border: 1px solid var(--input-border); border-radius: var(--r-sm); }
     #addRow .foot { display: flex; justify-content: flex-end; }
-    button { font: 12px/1.6 "Microsoft YaHei"; padding: 3px 12px; border-radius: 6px;
-      border: 1px solid #bbb; background: #f2f2f2; cursor: pointer; }
-    button:hover { background: #e5f1fb; }
-    button.primary { background: #2f9bff; border-color: #1b7fdd; color: #fff; font-weight: 700; }
-    button.primary:hover { background: #1f8aef; }
+    button { font: 12px/1.6 "Microsoft YaHei"; padding: 3px 12px; border-radius: var(--r-sm);
+      border: 1px solid var(--btn-border); background: var(--btn-bg); color: var(--text); cursor: pointer; }
+    button:hover { background: var(--accent-weak); }
+    button.primary { background: var(--accent); border-color: var(--accent-strong); color: var(--on-accent); font-weight: 700; }
+    button.primary:hover { background: var(--accent-strong); }
     #list { flex: 1 1 auto; overflow: auto; margin-top: 8px; }
     .row { display: flex; align-items: center; gap: 8px; padding: 6px 9px;
-      border: 1px solid #e6e6e6; border-radius: 8px; background: #fff; margin-bottom: 6px; }
+      border: 1px solid var(--hairline); border-radius: var(--r-md); background: var(--card); margin-bottom: 6px; }
     .row .kw { flex: 0 0 35%; font-weight: 700; word-break: break-all; }
-    .row .rp { flex: 1 1 auto; color: #444; word-break: break-all; }
-    .row .delBtn { flex: 0 0 auto; border: none; background: none; color: #999; font-size: 13px; }
-    .row .delBtn:hover { color: #e05555; }
-    .empty { color: #aaa; text-align: center; padding: 24px 0; }
+    .row .rp { flex: 1 1 auto; color: var(--text-2); word-break: break-all; }
+    .row .delBtn { flex: 0 0 auto; border: none; background: none; color: var(--text-3); font-size: 13px; }
+    .row .delBtn:hover { color: var(--bad); }
+    .empty { color: var(--text-3); text-align: center; padding: 24px 0; }
     /* ---- 大模型（LLM）折叠区：默认收起，点开才占地方（窗口只有 460x500） ---- */
-    details.llm { border: 1px solid #e0e0e0; border-radius: 8px; background: #fff;
+    details.llm { border: 1px solid var(--card-border); border-radius: var(--r-md); background: var(--card);
       padding: 6px 10px; margin-bottom: 10px; }
-    details.llm > summary { cursor: pointer; color: #2f6fb8; font-weight: 700; font-size: 13px;
+    details.llm > summary { cursor: pointer; color: var(--accent-strong); font-weight: 700; font-size: 13px;
       outline: none; }
     details.llm[open] > summary { margin-bottom: 6px; }
     .fld { display: flex; align-items: center; gap: 6px; margin: 4px 0; }
-    .fld > label { flex: 0 0 84px; color: #555; font-size: 12px; }
-    .fld > input, .fld > select, .fld > textarea { flex: 1 1 auto; min-width: 0;
-      font: 12px/1.5 "Microsoft YaHei"; padding: 3px 6px; border: 1px solid #ccc; border-radius: 6px; }
+    .fld > label { flex: 0 0 84px; color: var(--text-2); font-size: 12px; }
+    .fld > input, .fld > select, .fld > textarea { flex: 1 1 auto; min-width: 0; color: var(--text); background: var(--card);
+      font: 12px/1.5 "Microsoft YaHei"; padding: 3px 6px; border: 1px solid var(--input-border); border-radius: var(--r-sm); }
     .fld > textarea { height: 46px; resize: vertical; }
     .fld > label.chk { flex: 1 1 auto; display: flex; align-items: center; gap: 5px; }
-    .fld .hint { color: #999; font-size: 11px; }
+    .fld .hint { color: var(--text-3); font-size: 11px; }
     .btnRow { display: flex; align-items: center; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
     #llmTestResult { font-size: 12px; margin-top: 5px; white-space: pre-wrap; word-break: break-all; }
-    #llmTestResult.ok { color: #2a8a3a; }
-    #llmTestResult.err { color: #cc4444; }
-    #llmKeyStatus { color: #666; font-size: 11px; }
+    #llmTestResult.ok { color: var(--ok); }
+    #llmTestResult.err { color: var(--bad); }
+    #llmKeyStatus { color: var(--text-2); font-size: 11px; }
     /* ---- 请求日志面板 ---- */
     #llmLogs { max-height: 132px; overflow: auto; margin-top: 5px;
-      border: 1px solid #eee; border-radius: 6px; background: #fafafa; }
-    #llmLogs .lg { display: flex; gap: 6px; padding: 3px 6px; font-size: 11px; color: #444;
-      border-bottom: 1px solid #f0f0f0; }
-    #llmLogs .lg .t { flex: 0 0 52px; color: #999; }
+      border: 1px solid var(--hairline); border-radius: var(--r-sm); background: var(--bg); }
+    #llmLogs .lg { display: flex; gap: 6px; padding: 3px 6px; font-size: 11px; color: var(--text-2);
+      border-bottom: 1px solid var(--hairline); }
+    #llmLogs .lg .t { flex: 0 0 52px; color: var(--text-3); }
     #llmLogs .lg .p { flex: 0 0 62px; font-weight: 700; }
-    #llmLogs .lg .p.llm { color: #2a8a3a; }
-    #llmLogs .lg .p.fallback { color: #c07a1a; }
-    #llmLogs .lg .p.retry { color: #888; }
+    #llmLogs .lg .p.llm { color: var(--ok); }
+    #llmLogs .lg .p.fallback { color: var(--warn); }
+    #llmLogs .lg .p.retry { color: var(--text-3); }
     #llmLogs .lg .d { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;
       white-space: nowrap; }
-    #llmLogs .none { color: #aaa; padding: 6px; font-size: 11px; }
+    #llmLogs .none { color: var(--text-3); padding: 6px; font-size: 11px; }
   </style>
 </head>
 <body>

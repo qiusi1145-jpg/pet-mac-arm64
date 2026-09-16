@@ -1,5 +1,7 @@
-/* 学英语窗口样式 —— Apple 设计语言：渐变背景 + 磨砂玻璃卡片 + 大圆角。
- * 换肤/调参只动 :root/[data-theme] 的 CSS 变量与 english.js 顶部 THEMES 预设，布局组件不感知。 */
+/* 学英语窗口样式 —— 明亮浅色设计语言：近白浅渐变背景 + 磨砂玻璃卡片 + 大圆角。
+ * 2026-09-17 全主题浅色化（用户要求：颜色变浅变明亮）：6 个主题 id 保持不变
+ * （settings 里存的主题名天然兼容、零迁移），只把每套的色值整体提明度降饱和；
+ * 布局组件不感知。换肤/调参只动 :root/[data-theme] 的 CSS 变量与 english.js 顶部 THEMES 预设。 */
 
 :root {
   /* ---- 圆角 / 模糊 / 阴影 ---- */
@@ -8,52 +10,52 @@
   --r-lg: 19px;
   --r-pill: 999px;
   --blur: 22px;
-  --shadow: 0 8px 28px rgba(31, 38, 72, 0.16);
-  --shadow-soft: 0 2px 10px rgba(31, 38, 72, 0.10);
+  --shadow: 0 8px 28px rgba(31, 38, 72, 0.10);
+  --shadow-soft: 0 2px 10px rgba(31, 38, 72, 0.07);
 
   /* ---- 语义色（各主题通用） ---- */
-  --ok: #34c759;      --ok-bg: rgba(52, 199, 89, 0.14);
-  --warn: #f5a623;    --warn-bg: rgba(245, 166, 35, 0.16);
-  --bad: #ff3b30;     --bad-bg: rgba(255, 59, 48, 0.12);
+  --ok: #3fa06c;      --ok-bg: rgba(63, 160, 108, 0.14);
+  --warn: #c88a2e;    --warn-bg: rgba(200, 138, 46, 0.16);
+  --bad: #d95c53;     --bad-bg: rgba(217, 92, 83, 0.12);
 
   /* ---- 默认主题（极光）的变量 ---- */
-  --g1: #5b7cfa; --g2: #8a5bd6; --g3: #4fc3f7;
-  --glass: rgba(255, 255, 255, 0.55);
-  --glass-strong: rgba(255, 255, 255, 0.78);
-  --brd: rgba(255, 255, 255, 0.65);
-  --text: #1c2030;
-  --text-dim: rgba(28, 32, 48, 0.55);
-  --accent: #5b6bf5;
-  --accent-2: #8a5bd6;
+  --g1: #dfe6fd; --g2: #ece4fb; --g3: #d8f0fc;
+  --glass: rgba(255, 255, 255, 0.72);
+  --glass-strong: rgba(255, 255, 255, 0.90);
+  --brd: rgba(43, 49, 55, 0.12);
+  --text: #2b3137;
+  --text-dim: rgba(43, 49, 55, 0.55);
+  --accent: #6b7fd7;
+  --accent-2: #9678d9;
   --on-accent: #ffffff;
-  --chip: rgba(255, 255, 255, 0.45);
-  --chip-on: rgba(255, 255, 255, 0.92);
+  --chip: rgba(255, 255, 255, 0.60);
+  --chip-on: rgba(255, 255, 255, 0.95);
 }
 
-/* ---- 6 套主题（与 english.js 的 THEMES 列表一一对应）；--softVeil = 柔和模式的白纱浓度 ---- */
-body[data-theme="aurora"]  { --g1: #5b7cfa; --g2: #8a5bd6; --g3: #4fc3f7; --accent: #5b6bf5; --accent-2: #8a5bd6; --softVeil: 0.52; }
-body[data-theme="sunset"]  { --g1: #ff9a56; --g2: #ff6a88; --g3: #ffc46b; --accent: #ff6a88; --accent-2: #ff9a56; --softVeil: 0.5; }
-body[data-theme="mint"]    { --g1: #2fbf71; --g2: #21b8a6; --g3: #7ce7a2; --accent: #1fa569; --accent-2: #21b8a6; --softVeil: 0.48; }
-body[data-theme="sakura"]  { --g1: #f78fb3; --g2: #c471ed; --g3: #fbc2eb; --accent: #e0619b; --accent-2: #c471ed; --softVeil: 0.5; }
+/* ---- 6 套主题（与 english.js 的 THEMES 列表一一对应）；--softVeil = 柔和模式的白纱浓度。
+ *    全部为浅色：渐变底是近白 pastel，accent 保持中低饱和（保证白字可读），
+ *    night/graphite 由"深色"重做成"浅色变体"（id 不变，语义改为云雾/浅灰）。 ---- */
+body[data-theme="aurora"]  { --g1: #dfe6fd; --g2: #ece4fb; --g3: #d8f0fc; --accent: #6b7fd7; --accent-2: #9678d9; --softVeil: 0.30; }
+body[data-theme="sunset"]  { --g1: #ffe8d6; --g2: #fddce2; --g3: #fff0cc; --accent: #d96a45; --accent-2: #dd8a7f; --softVeil: 0.28; }
+body[data-theme="mint"]    { --g1: #d9f2e2; --g2: #d2efeb; --g3: #eaf9e2; --accent: #3f9e74; --accent-2: #3aa393; --softVeil: 0.26; }
+body[data-theme="sakura"]  { --g1: #fde3ee; --g2: #efe0fb; --g3: #fdecf4; --accent: #d0669e; --accent-2: #b57ee2; --softVeil: 0.28; }
 body[data-theme="night"]   {
-  --g1: #241a52; --g2: #12122b; --g3: #3d1e63;
-  --glass: rgba(38, 36, 66, 0.55); --glass-strong: rgba(44, 42, 76, 0.85);
-  --brd: rgba(255, 255, 255, 0.14);
-  --text: #eceaf6; --text-dim: rgba(236, 234, 246, 0.55);
-  --accent: #7c6bff; --accent-2: #a86bd8;
-  --chip: rgba(255, 255, 255, 0.10); --chip-on: rgba(255, 255, 255, 0.22);
-  --shadow: 0 8px 28px rgba(0, 0, 0, 0.40); --shadow-soft: 0 2px 10px rgba(0, 0, 0, 0.30);
-  --softVeil: 0.16;
+  --g1: #e8ecf4; --g2: #dde3ec; --g3: #f2f5f9;
+  --glass: rgba(255, 255, 255, 0.75); --glass-strong: rgba(255, 255, 255, 0.92);
+  --brd: rgba(43, 49, 55, 0.14);
+  --text: #2b3137; --text-dim: rgba(43, 49, 55, 0.55);
+  --accent: #5d6b7e; --accent-2: #8794a6;
+  --chip: rgba(255, 255, 255, 0.62); --chip-on: rgba(255, 255, 255, 0.96);
+  --softVeil: 0.22;
 }
 body[data-theme="graphite"] {
-  --g1: #43484d; --g2: #23272b; --g3: #5a6167;
-  --glass: rgba(255, 255, 255, 0.10); --glass-strong: rgba(255, 255, 255, 0.18);
-  --brd: rgba(255, 255, 255, 0.16);
-  --text: #f0f1f3; --text-dim: rgba(240, 241, 243, 0.55);
-  --accent: #6f7d8c; --accent-2: #8fa0b0;
-  --chip: rgba(255, 255, 255, 0.10); --chip-on: rgba(255, 255, 255, 0.22);
-  --shadow: 0 8px 28px rgba(0, 0, 0, 0.40); --shadow-soft: 0 2px 10px rgba(0, 0, 0, 0.30);
-  --softVeil: 0.14;
+  --g1: #eef0f2; --g2: #e2e5e9; --g3: #f7f8fa;
+  --glass: rgba(255, 255, 255, 0.78); --glass-strong: rgba(255, 255, 255, 0.94);
+  --brd: rgba(43, 49, 55, 0.14);
+  --text: #2b3137; --text-dim: rgba(43, 49, 55, 0.55);
+  --accent: #64707e; --accent-2: #8b97a5;
+  --chip: rgba(255, 255, 255, 0.64); --chip-on: rgba(255, 255, 255, 0.96);
+  --softVeil: 0.20;
 }
 
 /* ---- 柔和模式：白纱叠在渐变上（不挡点击），内容层抬到纱之上 ---- */
@@ -233,7 +235,8 @@ textarea:focus { border-color: var(--accent); }
 .sw.on { border-color: var(--text); }
 .sw .nm {
   position: absolute; left: 0; right: 0; bottom: 3px; text-align: center;
-  font-size: 10px; font-weight: 800; color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,0.5);
+  font-size: 10px; font-weight: 800; color: rgba(43, 49, 55, 0.78);
+  text-shadow: 0 1px 3px rgba(255, 255, 255, 0.8);
 }
 
 /* ================= 设置面板（扩展） ================= */

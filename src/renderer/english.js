@@ -19,14 +19,16 @@ const h = (tag, cls, text) => {
   return el;
 };
 
-/* 主题预设（与 english.css 的 body[data-theme=…] 一一对应；bg 仅用于色板预览） */
+/* 主题预设（与 english.css 的 body[data-theme=…] 一一对应；bg 仅用于色板预览）。
+ * 2026-09-17 全主题浅色化：id 不变（老用户存的 theme 名零迁移），
+ * night/graphite 语义改为浅色变体（云雾/浅灰），只换 bg 预览与显示名。 */
 const THEMES = [
-  { id: 'aurora', name: '极光', bg: 'linear-gradient(160deg,#5b7cfa,#8a5bd6 52%,#4fc3f7)' },
-  { id: 'sunset', name: '日落', bg: 'linear-gradient(160deg,#ff9a56,#ff6a88 52%,#ffc46b)' },
-  { id: 'mint', name: '薄荷', bg: 'linear-gradient(160deg,#2fbf71,#21b8a6 52%,#7ce7a2)' },
-  { id: 'sakura', name: '樱粉', bg: 'linear-gradient(160deg,#f78fb3,#c471ed 52%,#fbc2eb)' },
-  { id: 'night', name: '暗夜', bg: 'linear-gradient(160deg,#241a52,#12122b 52%,#3d1e63)' },
-  { id: 'graphite', name: '石墨', bg: 'linear-gradient(160deg,#43484d,#23272b 52%,#5a6167)' },
+  { id: 'aurora', name: '极光', bg: 'linear-gradient(160deg,#dfe6fd,#ece4fb 52%,#d8f0fc)' },
+  { id: 'sunset', name: '日落', bg: 'linear-gradient(160deg,#ffe8d6,#fddce2 52%,#fff0cc)' },
+  { id: 'mint', name: '薄荷', bg: 'linear-gradient(160deg,#d9f2e2,#d2efeb 52%,#eaf9e2)' },
+  { id: 'sakura', name: '樱粉', bg: 'linear-gradient(160deg,#fde3ee,#efe0fb 52%,#fdecf4)' },
+  { id: 'night', name: '云雾', bg: 'linear-gradient(160deg,#e8ecf4,#dde3ec 52%,#f2f5f9)' },
+  { id: 'graphite', name: '浅灰', bg: 'linear-gradient(160deg,#eef0f2,#e2e5e9 52%,#f7f8fa)' },
 ];
 const RATIO_LABELS = { 'review-first': '复习优先', '3:1': '3 : 1', '2:1': '2 : 1', '1:1': '1 : 1', '1:2': '1 : 2' };
 

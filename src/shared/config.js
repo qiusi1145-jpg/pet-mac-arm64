@@ -252,7 +252,9 @@ const CFG = {
 
   /* ---------- 待办清单 ---------- */
   todo: {
-    // 后台检查“未完成且已到截止时间”待办的间隔（ms）。
+    windowWidth: 440,      // 待办窗口尺寸（2026-09-17 从 main.js 硬编码挪入，与其它窗口同源）
+    windowHeight: 560,
+    // 后台检查"未完成且已到截止时间"待办的间隔（ms）。
     checkIntervalMs: 30 * 1000,
     // 到期提醒气泡停留时长（ms）。
     remindDurationMs: 5000,

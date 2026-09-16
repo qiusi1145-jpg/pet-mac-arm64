@@ -7,46 +7,49 @@
     content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:"
   />
   <title>番茄钟</title>
+  <link rel="stylesheet" href="./tokens.css" />
   <style>
-    :root { --ring: #ff7a59; --ringBreak: #35b58b; }
-    html, body { margin: 0; height: 100%; background: #fafafa; color: #222;
+    /* 番茄钟局部色：色相保留（专注=橙 / 休息=绿），只提明度降饱和（2026-09-17 浅色化） */
+    :root { --ring: #f2a37c; --ringBreak: #8fd0ba;
+      --pom: #f2a37c; --pom-strong: #e08a5c; --pom-on: #5f3417; }
+    html, body { margin: 0; height: 100%; background: #fff8f4; color: var(--text);
       font: 13px/1.6 "Microsoft YaHei", sans-serif; user-select: none; -webkit-user-select: none; }
     body { display: flex; flex-direction: column; box-sizing: border-box; padding: 12px 14px; }
     header { display: flex; align-items: baseline; gap: 8px; }
     header h1 { font-size: 15px; margin: 0; }
-    header .tip { color: #888; font-size: 12px; }
+    header .tip { color: var(--text-3); font-size: 12px; }
     .stage { flex: 0 0 auto; display: flex; flex-direction: column; align-items: center; padding: 6px 0 2px; }
     .dial { position: relative; width: 186px; height: 186px; }
     .dial svg { transform: rotate(-90deg); }
     .dial .center { position: absolute; inset: 0; display: flex; flex-direction: column;
       align-items: center; justify-content: center; gap: 0; }
     .dial .clock { font: 700 38px/1.1 Consolas, "Courier New", monospace; letter-spacing: 1px; }
-    .dial .phase { color: #666; font-size: 12px; margin-top: 4px; }
-    .dial .count { color: #aaa; font-size: 11px; margin-top: 2px; }
+    .dial .phase { color: var(--text-2); font-size: 12px; margin-top: 4px; }
+    .dial .count { color: var(--text-3); font-size: 11px; margin-top: 2px; }
     .ctrls { display: flex; gap: 8px; margin: 10px 0 4px; }
-    button { font: 12px/1.6 "Microsoft YaHei"; padding: 4px 14px; border-radius: 6px;
-      border: 1px solid #bbb; background: #f2f2f2; cursor: pointer; }
-    button:hover { background: #e5f1fb; }
-    button.primary { background: #ff7a59; border-color: #e2633f; color: #fff; font-weight: 700; }
-    button.primary:hover { background: #f0673f; }
+    button { font: 12px/1.6 "Microsoft YaHei"; padding: 4px 14px; border-radius: var(--r-sm);
+      border: 1px solid var(--btn-border); background: var(--btn-bg); color: var(--text); cursor: pointer; }
+    button:hover { background: #fdf0e9; }
+    button.primary { background: var(--pom); border-color: var(--pom-strong); color: var(--pom-on); font-weight: 700; }
+    button.primary:hover { background: #eda880; }
     button:disabled { opacity: .5; cursor: default; }
     main { flex: 1 1 auto; overflow: auto; margin-top: 6px; }
-    section { border: 1px solid #e0e0e0; border-radius: 8px; background: #fff;
+    section { border: 1px solid var(--card-border); border-radius: var(--r-md); background: var(--card);
       padding: 9px 11px; margin-bottom: 10px; }
-    section h2 { font-size: 13px; margin: 0 0 6px; color: #2f6fb8; }
+    section h2 { font-size: 13px; margin: 0 0 6px; color: #b06a3e; }
     .row { display: flex; align-items: center; gap: 7px; margin: 7px 0; flex-wrap: wrap; }
-    .row > .lb { flex: 0 0 64px; color: #444; }
-    .chip { font: 12px/1.5 "Microsoft YaHei"; padding: 3px 10px; border-radius: 14px;
-      border: 1px solid #ddd; background: #f7f7f7; cursor: pointer; }
-    .chip:hover { background: #eef6ff; border-color: #b9d8f5; }
-    .chip.on { background: #ffece6; border-color: #ffb39b; color: #c2461f; font-weight: 700; }
-    input[type=number] { width: 72px; font: 13px/1.6 "Microsoft YaHei";
-      padding: 3px 7px; border: 1px solid #ccc; border-radius: 6px; }
+    .row > .lb { flex: 0 0 64px; color: var(--text-2); }
+    .chip { font: 12px/1.5 "Microsoft YaHei"; padding: 3px 10px; border-radius: var(--r-pill);
+      border: 1px solid #e5dfd9; background: #faf6f3; cursor: pointer; color: var(--text); }
+    .chip:hover { background: #fdf0e9; border-color: #ecc9b2; }
+    .chip.on { background: #fce8dc; border-color: #f2b795; color: #b35f2e; font-weight: 700; }
+    input[type=number] { width: 72px; font: 13px/1.6 "Microsoft YaHei"; color: var(--text);
+      padding: 3px 7px; border: 1px solid var(--input-border); border-radius: var(--r-sm); }
     .chk { display: flex; align-items: center; gap: 7px; margin: 6px 0; cursor: pointer; }
-    .hint { color: #999; font-size: 11px; margin: 2px 0 0; }
-    footer { display: flex; align-items: center; gap: 8px; padding-top: 8px; border-top: 1px solid #eee; }
-    footer .msg { flex: 1 1 auto; color: #2a8a3a; font-size: 12px; min-height: 18px; }
-    footer .msg.err { color: #cc4444; }
+    .hint { color: var(--text-3); font-size: 11px; margin: 2px 0 0; }
+    footer { display: flex; align-items: center; gap: 8px; padding-top: 8px; border-top: 1px solid #f3e7de; }
+    footer .msg { flex: 1 1 auto; color: var(--ok); font-size: 12px; min-height: 18px; }
+    footer .msg.err { color: var(--bad); }
   </style>
 </head>
 <body>

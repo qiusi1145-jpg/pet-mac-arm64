@@ -7,49 +7,50 @@
     content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:"
   />
   <title>语音聊天设置</title>
+  <link rel="stylesheet" href="./tokens.css" />
   <style>
-    html, body { margin: 0; height: 100%; background: #fafafa; color: #222;
+    html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
       font: 13px/1.6 "Microsoft YaHei", sans-serif; user-select: none; -webkit-user-select: none; }
     body { display: flex; flex-direction: column; box-sizing: border-box; padding: 12px 14px; }
     header h1 { font-size: 15px; margin: 0 0 2px; }
-    header .tip { color: #888; font-size: 12px; margin-bottom: 10px; }
+    header .tip { color: var(--text-3); font-size: 12px; margin-bottom: 10px; }
     main { flex: 1 1 auto; overflow: auto; }
-    section { border: 1px solid #e0e0e0; border-radius: 8px; background: #fff;
+    section { border: 1px solid var(--card-border); border-radius: var(--r-md); background: var(--card);
       padding: 9px 11px; margin-bottom: 10px; }
-    section h2 { font-size: 13px; margin: 0 0 6px; color: #2f6fb8; }
-    section .hint { color: #999; font-size: 11px; margin: 4px 0 0; }
+    section h2 { font-size: 13px; margin: 0 0 6px; color: var(--accent-strong); }
+    section .hint { color: var(--text-3); font-size: 11px; margin: 4px 0 0; }
     label.mode { display: flex; align-items: flex-start; gap: 8px; padding: 5px 4px;
-      border-radius: 6px; cursor: pointer; }
-    label.mode:hover { background: #f2f8ff; }
+      border-radius: var(--r-sm); cursor: pointer; }
+    label.mode:hover { background: var(--hover-tint); }
     label.mode input { margin-top: 3px; }
     label.mode .mt { font-weight: 700; }
-    label.mode .md { color: #888; font-size: 11px; }
+    label.mode .md { color: var(--text-3); font-size: 11px; }
     .field { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
-    .field > .lb { flex: 0 0 92px; color: #444; }
+    .field > .lb { flex: 0 0 92px; color: var(--text-2); }
     .field > .va { flex: 1 1 auto; display: flex; align-items: center; gap: 6px; }
-    select, input[type=text], input[type=number] { font: 13px/1.6 "Microsoft YaHei";
-      padding: 3px 7px; border: 1px solid #ccc; border-radius: 6px; background: #fff; }
+    select, input[type=text], input[type=number] { font: 13px/1.6 "Microsoft YaHei"; color: var(--text);
+      padding: 3px 7px; border: 1px solid var(--input-border); border-radius: var(--r-sm); background: var(--card); }
     input[type=text], select { flex: 1 1 auto; min-width: 0; }
     input[type=number] { width: 78px; }
     .chk { display: flex; align-items: center; gap: 7px; margin: 5px 0; cursor: pointer; }
     .keybox { font: 12px/1.6 Consolas, "Courier New", monospace; min-width: 132px;
-      padding: 3px 10px; border-radius: 6px; border: 1px solid #bbb; background: #f7f7f7;
-      color: #333; cursor: pointer; }
-    .keybox:hover { background: #eef6ff; border-color: #b9d8f5; }
-    .keybox.rec { background: #fff5e6; border-color: #f0b96b; color: #a8631a;
-      box-shadow: 0 0 0 2px rgba(240,185,107,.35); }
-    .kwline { font: 12px/1.5 Consolas, "Courier New", monospace; color: #444;
-      background: #f6f6f6; border: 1px dashed #ddd; border-radius: 6px;
+      padding: 3px 10px; border-radius: var(--r-sm); border: 1px solid var(--btn-border);
+      background: #f7f8fa; color: var(--text); cursor: pointer; }
+    .keybox:hover { background: var(--hover-tint); border-color: #c3d9ef; }
+    .keybox.rec { background: var(--warn-bg); border-color: #e5c68d; color: var(--warn);
+      box-shadow: 0 0 0 2px rgba(229, 198, 141, 0.30); }
+    .kwline { font: 12px/1.5 Consolas, "Courier New", monospace; color: var(--text-2);
+      background: #f3f5f7; border: 1px dashed var(--input-border); border-radius: var(--r-sm);
       padding: 5px 8px; margin-top: 6px; word-break: break-all; }
-    .kwline.bad { color: #b06000; border-color: #f0d5a8; background: #fffaf0; }
-    footer { display: flex; align-items: center; gap: 8px; padding-top: 8px; border-top: 1px solid #eee; }
-    footer .msg { flex: 1 1 auto; color: #2a8a3a; font-size: 12px; min-height: 18px; }
-    footer .msg.err { color: #cc4444; }
-    button { font: 12px/1.6 "Microsoft YaHei"; padding: 4px 14px; border-radius: 6px;
-      border: 1px solid #bbb; background: #f2f2f2; cursor: pointer; }
-    button:hover { background: #e5f1fb; }
-    button.primary { background: #2f9bff; border-color: #1b7fdd; color: #fff; font-weight: 700; }
-    button.primary:hover { background: #1f8aef; }
+    .kwline.bad { color: var(--warn); border-color: #ecd9b0; background: var(--warn-bg); }
+    footer { display: flex; align-items: center; gap: 8px; padding-top: 8px; border-top: 1px solid var(--hairline); }
+    footer .msg { flex: 1 1 auto; color: var(--ok); font-size: 12px; min-height: 18px; }
+    footer .msg.err { color: var(--bad); }
+    button { font: 12px/1.6 "Microsoft YaHei"; padding: 4px 14px; border-radius: var(--r-sm);
+      border: 1px solid var(--btn-border); background: var(--btn-bg); color: var(--text); cursor: pointer; }
+    button:hover { background: var(--accent-weak); }
+    button.primary { background: var(--accent); border-color: var(--accent-strong); color: var(--on-accent); font-weight: 700; }
+    button.primary:hover { background: var(--accent-strong); }
   </style>
 </head>
 <body>
