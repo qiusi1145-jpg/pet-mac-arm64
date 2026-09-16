@@ -14,6 +14,16 @@
  * 持久化：settings.voice（主进程 voice:prefs:load / voice:prefs:save）。
  */
 const { ipcRenderer } = require('electron');
+
+/* ---- UI 主题色（通用设置切换；只改视觉变量，不碰业务逻辑） ---- */
+void (async () => {
+  const prefs = await ipcRenderer.invoke('uiPrefs:load').catch(() => null);
+  if (prefs && prefs.accent) document.documentElement.dataset.accent = prefs.accent;
+})();
+ipcRenderer.on('ui:accent', (_e, prefs) => {
+  if (prefs && prefs.accent) document.documentElement.dataset.accent = prefs.accent;
+});
+
 const { CFG } = require('../shared/config');
 const V = require('../shared/voice');
 

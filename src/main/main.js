@@ -28,6 +28,7 @@ const { LlmSecret, resolveKeyFile, isInsideDir } = require('./llmSecret');
 const { ChatLog, resolveLogFile } = require('./chatLog');
 const chatM = require('../shared/chat');
 const llmM = require('../shared/chat/llm');
+const { ACCENTS, normalizeAccentPref } = require('../shared/uiTheme');
 const { WinEnum, isSystemWindow } = require('./winenum');
 
 const PET_NAME = '桌宠';
@@ -165,6 +166,7 @@ class PetApp {
     this.reminderTimer = 0;       // 随机催促定时器
     this.chatWin = null;          // 聊天窗口
     this.chatSettingsWin = null;  // 聊天设置窗口
+    this.generalSettingsWin = null; // 通用设置窗口（UI 主题色等）
     this.englishWin = null;       // 学英语窗口
     this.pomodoroWin = null;      // 番茄钟窗口
     this.plannerWin = null;       // 学习计划表窗口
@@ -496,6 +498,15 @@ class PetApp {
     ipcMain.handle('chat:send', (_e, text) => this.chatSend(text));
     ipcMain.handle('chat:history:load', () => this.chatHistoryLoad());
     ipcMain.handle('chat:history:status', () => this.chatLogStatus());
+
+    // 通用设置（UI 主题色）：保存即持久化并广播所有工具窗实时换色（2026-09-17 新增）
+    ipcMain.handle('uiPrefs:load', () => this.store.get().uiPrefs || { accent: 'blue' });
+    ipcMain.handle('uiPrefs:save', (_e, prefs) => {
+      const clean = normalizeAccentPref(prefs);
+      this.store.update({ uiPrefs: clean }).saveNow();
+      this.broadcastAccent();
+      return clean;
+    });
     ipcMain.handle('chat:history:clear', () => this.chatHistoryClear());
     ipcMain.handle('chat:strings', () => ({ opening: CFG.chat.strings.opening, missNotice: CFG.chat.strings.missNotice }));
     ipcMain.handle('chatRules:load', () => this.store.get().chatRules || []);
@@ -722,6 +733,7 @@ class PetApp {
       title: '待办清单',
       width: CFG.todo.windowWidth,
       height: CFG.todo.windowHeight,
+      icon: this.windowIcon(),
       resizable: true,
       minimizable: true,
       maximizable: false,
@@ -820,6 +832,7 @@ class PetApp {
       title: '聊天',
       width: CFG.chat.windowWidth,
       height: CFG.chat.windowHeight,
+      icon: this.windowIcon(),
       resizable: true,
       minimizable: true,
       maximizable: false,
@@ -845,6 +858,7 @@ class PetApp {
       title: '聊天设置',
       width: CFG.chat.settingsWidth,
       height: CFG.chat.settingsHeight,
+      icon: this.windowIcon(),
       resizable: true,
       minimizable: true,
       maximizable: false,
@@ -872,6 +886,7 @@ class PetApp {
       title: '学英语',
       width: CFG.english.windowWidth,
       height: CFG.english.windowHeight,
+      icon: this.windowIcon(),
       resizable: true,
       minimizable: true,
       maximizable: false,
@@ -898,6 +913,7 @@ class PetApp {
     if (cur && !cur.isDestroyed()) { cur.show(); cur.focus(); return cur; }
     const w = new BrowserWindow({
       title, width, height,
+      icon: this.windowIcon(),
       resizable: true, minimizable: true, maximizable: false, fullscreenable: false,
       webPreferences: {
         nodeIntegration: true, contextIsolation: false, sandbox: false,
@@ -946,6 +962,34 @@ class PetApp {
 
   openVoiceSettingsWindow() {
     return this.openToolWindow('voiceSettingsWin', 'voiceSettings.html', '语音聊天设置', CFG.voice.settingsWidth, CFG.voice.settingsHeight);
+  }
+
+  /** 标题栏应用图标：优先用当前桌宠形象（"换图即换图标"，与计划表装饰同源），回退内置素材。 */
+  windowIcon() {
+    try {
+      const p = this.resolvePetPath();
+      if (p && fs.existsSync(p)) return p;
+    } catch { /* 解析失败走回退 */ }
+    const fallback = path.join(__dirname, '..', 'assets', 'pet.png');
+    return fs.existsSync(fallback) ? fallback : undefined;
+  }
+
+  /**
+   * UI 主题色变化 → 推给所有打开中的工具窗实时换色。
+   * 学习模块窗口（english/pomodoro/planner）不应用该变量，因此不推。
+   */
+  broadcastAccent() {
+    const prefs = this.store.get().uiPrefs || { accent: 'blue' };
+    for (const key of ['chatWin', 'chatSettingsWin', 'voiceSettingsWin', 'todoWin', 'generalSettingsWin']) {
+      const w = this[key];
+      if (w && !w.isDestroyed()) w.webContents.send('ui:accent', prefs);
+    }
+  }
+
+  /** 通用设置窗口：目前只有「界面主题色」一项（generalSettings.html）。 */
+  openGeneralSettingsWindow() {
+    return this.openToolWindow('generalSettingsWin', 'generalSettings.html', '通用设置',
+      CFG.generalSettings.windowWidth, CFG.generalSettings.windowHeight);
   }
 
   /** 供设置窗与计划表窗复用的"宠物主图缩略图"（同一套素材解析顺序，换图即换装饰）。 */
@@ -1663,6 +1707,8 @@ class PetApp {
         : null,
       stateSub.length ? self.menuItem('state', { submenu: stateSub }) : null,
       self.menuItem('resetStatus', { click: () => self.act('resetStatus') }),
+      // 「通用设置…」（2026-09-17：UI 主题色等跨窗口偏好的入口，窗口本身暂只有这一项）
+      self.menuItem('generalSettings', { click: () => self.openGeneralSettingsWindow() }),
       // 「更换宠物…」已移除（"换图即定制"：素材替换走素材根目录）
       { type: 'separator' },
       self.menuItem('quit', { click: () => self.quit() }),

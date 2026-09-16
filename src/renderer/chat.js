@@ -7,6 +7,16 @@
  *  规则由“聊天设置”窗口维护；未命中任何关键词时桌宠会被“点击一下”（Q 弹 + 情绪变化）。
  *  开场白：记录为空时由主进程写入一条（不会每次开窗都堆一条）。 */
 const { ipcRenderer } = require('electron');
+
+/* ---- UI 主题色（通用设置切换；只改视觉变量，不碰业务逻辑） ---- */
+void (async () => {
+  const prefs = await ipcRenderer.invoke('uiPrefs:load').catch(() => null);
+  if (prefs && prefs.accent) document.documentElement.dataset.accent = prefs.accent;
+})();
+ipcRenderer.on('ui:accent', (_e, prefs) => {
+  if (prefs && prefs.accent) document.documentElement.dataset.accent = prefs.accent;
+});
+
 const { CFG } = require('../shared/config');
 const V = require('../shared/voice');   // 键位展示/匹配：与主进程注册全局键**共用同一套纯函数**，不各写一套
 

@@ -3,6 +3,16 @@
  *  数据全部走主进程（todo:* IPC），持久化在 settings.json。 */
 const { ipcRenderer } = require('electron');
 
+/* ---- UI 主题色（通用设置切换；只改视觉变量，不碰业务逻辑） ---- */
+void (async () => {
+  const prefs = await ipcRenderer.invoke('uiPrefs:load').catch(() => null);
+  if (prefs && prefs.accent) document.documentElement.dataset.accent = prefs.accent;
+})();
+ipcRenderer.on('ui:accent', (_e, prefs) => {
+  if (prefs && prefs.accent) document.documentElement.dataset.accent = prefs.accent;
+});
+
+
 const $ = (id) => document.getElementById(id);
 const listEl = $('list'), textEl = $('text'), dueEl = $('due'), impEl = $('important'), countEl = $('count');
 let todos = [];

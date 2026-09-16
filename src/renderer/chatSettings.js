@@ -4,6 +4,16 @@
  *  引擎不可用时由主进程的 selectEngine 自动回落 rule，这里只负责展示与切换。 */
 const { ipcRenderer } = require('electron');
 
+/* ---- UI 主题色（通用设置切换；只改视觉变量，不碰业务逻辑） ---- */
+void (async () => {
+  const prefs = await ipcRenderer.invoke('uiPrefs:load').catch(() => null);
+  if (prefs && prefs.accent) document.documentElement.dataset.accent = prefs.accent;
+})();
+ipcRenderer.on('ui:accent', (_e, prefs) => {
+  if (prefs && prefs.accent) document.documentElement.dataset.accent = prefs.accent;
+});
+
+
 const listEl = document.getElementById('list');
 const kwEl = document.getElementById('keyword');
 const rpEl = document.getElementById('reply');

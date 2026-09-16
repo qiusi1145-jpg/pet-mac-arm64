@@ -250,6 +250,14 @@ const CFG = {
     maxIntervalMs: 25 * 1000,
   },
 
+  /* ---------- 通用设置（独立窗口；UI 主题色等跨窗口偏好） ----------
+   * 2026-09-17 新增：目前只有「界面主题色 accent」一项（清洗在 shared/uiTheme.js，
+   * 持久化在 settings.json 的 uiPrefs 字段，保存即广播所有工具窗实时换色）。 */
+  generalSettings: {
+    windowWidth: 380,
+    windowHeight: 320,
+  },
+
   /* ---------- 待办清单 ---------- */
   todo: {
     windowWidth: 440,      // 待办窗口尺寸（2026-09-17 从 main.js 硬编码挪入，与其它窗口同源）
@@ -521,6 +529,7 @@ const CFG = {
       chatOpen: { label: '聊天' },
       chatSettings: { label: '聊天设置' },
       voiceSettings: { label: '语音聊天设置…' },
+      generalSettings: { label: '通用设置…' },
       // 「学习」一级菜单（2026-09-14 起：学英语从聊天子菜单迁到这里）
       learn: { label: '学习' },
       english: { label: '学英语' },

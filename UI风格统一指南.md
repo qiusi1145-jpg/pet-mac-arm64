@@ -2,40 +2,34 @@
 
 > 本文档是 **UI 风格的改版规范**，与 README（功能现状权威）平行，不互相替代。
 > 适用前提：**除非用户特地说要某种风格的 UI**，否则一切 UI 改动必须遵守本文。
-> 首次落地：2026-09-17「Fluent 浅色统一改版」（git 提交见版本日志）。
+> 演进：2026-09-17 上午 Fluent 浅色 → 同日按用户指示升级为**苹果极简风**（现行标准）。
 
-## 1. 设计基调：明亮浅色（Fluent 风）
+## 1. 设计基调：苹果极简（Apple Minimal，现行标准）
 
-用户 2026-09-17 定调：**全项目工具窗统一为明亮浅色**，颜色宁浅勿浓。
-参考体系 = Windows 11 Fluent 浅色（与项目原有的 Windows 原生右键菜单/托盘气质一致）。
+用户 2026-09-17 定调：**除「学习」模块外的所有页面 = 苹果极简风**——干净布局、充足留白、
+系统默认字体、中性浅色配色、圆角卡片、柔和阴影；只动视觉，不动功能/交互/文案/布局结构。
 
-**唯一的调色入口是 `src/renderer/tokens.css`**（:root CSS 变量层）。各窗口 `<style>`
-只允许引用 `var(--xxx)`，**禁止再写死色值**。改配色 = 只改 tokens.css 一处。
+**两套变量层，变量名同契约，换风格 = 换 `<link>` 的 css**：
+- `src/renderer/apple.css` —— **非学习模块工具窗用**（现行标准，唯一调色入口）；
+- `src/renderer/tokens.css` —— **「学习」模块用**（番茄钟/计划表），用户要求保持原样，别动。
 
-当前 token 速查（改版后以此为准，改动请同步更新本表）：
+**主色（accent）不再是写死的**：预设白名单在 `shared/uiTheme.js`（blue/purple/pink/green/
+orange/graphite，Apple 系统色系），用户在「通用设置」窗切换，落盘 `settings.json uiPrefs.accent`
+（清洗 `normalizeAccentPref`），保存即主进程广播 `ui:accent` → 各工具窗实时换色
+（实现：`html[data-accent=…]` 覆盖 apple.css 变量）。
 
-| 变量 | 值 | 用途 |
+## 2. 窗口接入现状（2026-09-17 晚改版后）
+
+| 窗口 | 文件 | 样式层 |
 | --- | --- | --- |
-| `--bg` | `#f6f8fa` | 窗口底色 |
-| `--card` / `--card-border` | `#ffffff` / `#e6e9ee` | 卡片底/描边 |
-| `--hairline` | `#eef1f4` | 更浅的分隔线 |
-| `--text` / `--text-2` / `--text-3` | `#2b3137` / `#6b7480` / `#98a1ab` | 主/次/提示文字 |
-| `--accent` / `--accent-strong` / `--accent-weak` | `#4a90d9` / `#3a7cc4` / `#e9f2fb` | 主色（旧 #2f9bff 的降饱和版）/ hover / 淡底 |
-| `--btn-bg` / `--btn-border` / `--input-border` | `#f1f3f5` / `#d7dce2` / `#d3d9df` | 控件 |
-| `--ok / --warn / --bad`（各配 `*-bg`） | `#3fa06c` / `#b97a1c` / `#cc4b44` | 语义色 |
-| `--r-sm / --r-md / --r-lg / --r-pill` | `6 / 8 / 12 / 999px` | 圆角两档+胶囊 |
-
-## 2. 窗口接入现状（2026-09-17 改版后）
-
-| 窗口 | 文件 | 接入方式 |
-| --- | --- | --- |
-| 聊天 | `chat.html` | tokens.css + 变量化 |
+| 聊天 | `chat.html` | apple.css + 变量化（气泡白卡+柔影） |
 | 聊天设置 | `chatSettings.html` | 同上（含 LLM 折叠区） |
 | 语音设置 | `voiceSettings.html` | 同上 |
-| 待办 | `todo.html` | 同上；窗口尺寸在 `config.js todo.windowWidth/Height` |
-| 番茄钟 | `pomodoro.html` | tokens.css + **局部色**（见 §4）；底色奶油白 `#fff8f4` |
-| 学习计划表 | `planner.html` | tokens.css + 变量化 |
-| 学英语 | `english.css` | 独立主题系统（见 §5），语义色与 tokens 同基调 |
+| 待办 | `todo.html` | 同上；窗口尺寸在 `config.js todo.*` |
+| 通用设置 | `generalSettings.html/.js` | 同上；**目前唯一功能 = 界面主题色** |
+| 番茄钟 | `pomodoro.html` | tokens.css + 局部橙绿（**学习模块，保持原样**） |
+| 学习计划表 | `planner.html` | tokens.css（**学习模块，保持原样**） |
+| 学英语 | `english.css` | 独立浅色主题系统（**学习模块，保持原样**） |
 | **宠物主窗** | `index.html` + `app.js` | **不接入、永远浅色化禁地**（见 §3） |
 
 ## 3. 主窗 HUD 是禁改区（最重要的一条）
@@ -47,43 +41,39 @@
 
 ## 4. 局部色：允许，但只许"同色相、调明度"
 
-个别窗口保留自己的身份色（这是特性不是 bug）：
-- **番茄钟**：专注=橙、休息=绿（`--ring/--ringBreak/--pom` 等局部变量，浅色化后约
-  `#f2a37c / #8fd0ba`，底色奶油白）；
-- **学英语**：主题 accent（见 §5）。
+- **番茄钟**（学习模块）：专注=橙、休息=绿（局部变量 `--ring/--ringBreak`），保持原样；
+- **学英语**（学习模块）：主题 accent，保持原样；
+- 新窗口加局部色的规则：色相跟随身份语义，明度拉高、饱和度压低（pastel 化），
+  彩色底上的文字必须保住对比度。
 
-给新窗口加局部色的规则：**色相跟随身份语义，明度拉高、饱和度压低**（pastel 化），
-按钮上的文字若在彩色底上必须保住对比度（白字配中低饱和 accent，或改用深字）。
+## 5. 学英语的主题系统（学习模块，勿动）
 
-## 5. 学英语的主题系统
-
-- 机制：CSS 变量 + `body[data-theme]` 切换（`english.css` 顶部）+ `english.js` 顶部
-  `THEMES` 预设（色板预览用）。两处必须同步改。
-- **主题 id 永不改名**（aurora/sunset/mint/sakura/night/graphite）：settings 里存的是 id，
-  改名 = 用户偏好丢失。要换风格只换 id 下的色值。
-- 2026-09-17 起 6 套全部是浅色 pastel（night/graphite 语义已变为"云雾/浅灰"浅色变体，
-  显示名在 english.js THEMES 的 `name` 字段）。
-- 「柔和/标准」浓度 = `--softVeil`（白纱叠加），机制保留。
+主题 id 永不改名（settings 存 id）：aurora/sunset/mint/sakura/night/graphite。
+2026-09-17 起全为浅色 pastel（night/graphite 语义="云雾/浅灰"），磨砂卡与柔和浓度保留。
 
 ## 6. 改 UI 的四原则（"协调不突兀"判据）
 
-1. **只动明度/饱和度，不动色相与布局**——布局、控件形状、信息结构不变；
+1. **只动明度/饱和度与留白，不动色相、布局结构、控件形状语义**；
 2. **语义色不变量**：成功/警告/错误、专注/休息、我方/宠物气泡的区分度必须保住；
 3. **保留各窗身份锚点**：番茄钟进度环、english 磨砂卡、聊天气泡三层结构；
-4. **深浅不跨窗混用**：工具窗一律浅色；主窗 HUD 一律深色半透明。
+4. **深浅不跨窗混用**：工具窗一律浅色苹果风；主窗 HUD 一律深色半透明。
 
 ## 7. 新增窗口的标准接入步骤
 
-① `<link rel="stylesheet" href="./tokens.css" />` 放在 `<style>` 之前；
-② `<style>` 里颜色全部换成 `var(--xxx)`，圆角用 `--r-sm/--r-md`；
-③ 窗口尺寸登记进 `config.js` 对应节点（**禁止在 main.js 硬编码**）；
-④ `node --check` 改过的 JS + `npm test` 全绿（L1 276 例基准）；
-⑤ 人工过一遍窗口（L2/L3 不在本机自动化跑，会弹置顶窗抢鼠标）。
+① `<link rel="stylesheet" href="./apple.css" />` 放在 `<style>` 之前；
+② `<style>` 里颜色/圆角全部引用 `var(--xxx)`；字体用系统栈
+   `-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif`；
+③ 标题栏图标：BrowserWindow 加 `icon: this.windowIcon()`（桌宠形象，换图即换图标）；
+④ 窗口尺寸登记进 `config.js`（**禁止在 main.js 硬编码**）；
+⑤ 若涉及持久化字段：`shared/*.js` 纯函数白名单清洗 + `content.js defaultSettings/normalizeSettings`
+   **双份同步** + 单测（参照 `shared/uiTheme.js` 与 `test/unit/uitheme.test.js`）；
+⑥ 主题色跟随：渲染层加载 `uiPrefs:load` 并监听 `ui:accent` 广播（参照 `chat.js` 顶部）；
+⑦ `node --check` 改过的 JS + `npm test` 全绿（L1 基准 279 例）；人工过一遍窗口（L2/L3 不自动化）。
 
 ## 8. 已知边界
 
-- `index.html :root` 里有一份 HUD 深色变量，属于主窗，别合并进 tokens.css；
-- english.css 的 `--ok/--warn/--bad` 与 tokens.css 数值相近但独立定义
-  （english 需在磨砂卡上工作），不强求合并；
-- 若未来用户点名"要某种风格"（如暗色、具体品牌风），以用户当次要求为准，
-  更新本文档后再动手。
+- `index.html :root` 里有一份 HUD 深色变量，属于主窗，别合并进任何变量层；
+- english.css 的 `--ok/--warn/--bad` 与两套变量层相近但独立定义，不强求合并；
+- 主题色广播对象列表在 `main.js broadcastAccent()`——新增可换色窗口后要把它加进去；
+- 学习模块三窗刻意走 tokens.css/自有 css，**用户要求冻结**；若未来解冻，同步更新本文；
+- 若未来用户点名"要某种风格"，以用户当次要求为准，更新本文档后再动手。

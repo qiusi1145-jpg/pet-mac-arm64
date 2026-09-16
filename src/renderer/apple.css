@@ -1,0 +1,56 @@
+/* ============================================================
+ * apple.css —— 苹果极简风变量层（2026-09-17 用户指定方向，取代 Fluent）
+ * 适用：聊天 / 聊天设置 / 语音设置 / 待办 / 通用设置 等**非学习模块**工具窗。
+ * 「学习」模块（学英语 english.css / 番茄钟 / 计划表）继续用 tokens.css，
+ * 那套变量名与本文件一致 —— 换主题 = 换链接的 css，组件样式零改动。
+ * 主窗 HUD（index.html 深色半透明）不接入任何变量层，永远不动。
+ * accent 切换：通用设置窗写入 settings.uiPrefs.accent → html[data-accent] 生效。
+ * ============================================================ */
+
+:root {
+  /* ---- 表面（Apple 灰白 + 白卡 + 极浅边） ---- */
+  --bg: #f5f5f7;
+  --card: #ffffff;
+  --card-border: #e8e8ed;
+  --hairline: #f0f0f2;
+
+  /* ---- 文字（Apple 官网同款灰阶） ---- */
+  --text: #1d1d1f;
+  --text-2: #6e6e73;
+  --text-3: #aeaeb2;
+
+  /* ---- 主色（默认 Apple 系统蓝；预设切换见文件底部 data-accent 块） ---- */
+  --accent: #007aff;
+  --accent-strong: #0066d6;
+  --accent-weak: #e9f2fe;
+  --on-accent: #ffffff;
+
+  /* ---- 控件 ---- */
+  --btn-bg: #f5f5f7;
+  --btn-border: #e3e3e8;
+  --input-border: #d2d2d7;
+  --hover-tint: #f0f6ff;
+
+  /* ---- 语义色（取 Apple 深色变体，保证浅底文字可读） ---- */
+  --ok: #248a3d;    --ok-bg: #e9f8ee;
+  --warn: #c93400;  --warn-bg: #fdeee7;
+  --bad: #d70015;   --bad-bg: #fdebec;
+
+  /* ---- 圆角（苹果连续圆角气质：比 Fluent 大一档） ---- */
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 16px;
+  --r-pill: 999px;
+
+  /* ---- 柔和阴影（替代大部分硬边框的"轻"感） ---- */
+  --shadow-card: 0 2px 12px rgba(0, 0, 0, 0.06);
+  --shadow-soft: 0 1px 4px rgba(0, 0, 0, 0.05);
+  --focus-ring: 0 0 0 3px rgba(0, 122, 255, 0.22);
+}
+
+/* ---- accent 预设（与 shared/uiTheme.js ACCENTS 一一对应；通用设置窗切换） ---- */
+html[data-accent="purple"]   { --accent: #af52de; --accent-strong: #9a3bcf; --accent-weak: #f6ecfc; --focus-ring: 0 0 0 3px rgba(175, 82, 222, 0.22); }
+html[data-accent="pink"]     { --accent: #ff2d55; --accent-strong: #e51e46; --accent-weak: #feebef; --focus-ring: 0 0 0 3px rgba(255, 45, 85, 0.20); }
+html[data-accent="green"]    { --accent: #34c759; --accent-strong: #248a3d; --accent-weak: #e9f8ee; --focus-ring: 0 0 0 3px rgba(52, 199, 89, 0.22); }
+html[data-accent="orange"]   { --accent: #ff9500; --accent-strong: #d97c00; --accent-weak: #fff3e2; --focus-ring: 0 0 0 3px rgba(255, 149, 0, 0.22); }
+html[data-accent="graphite"] { --accent: #8e8e93; --accent-strong: #6e6e73; --accent-weak: #f2f2f7; --focus-ring: 0 0 0 3px rgba(142, 142, 147, 0.25); }

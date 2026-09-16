@@ -8,6 +8,7 @@ const { CFG } = require('./config');
 const { normalizeVoicePrefs } = require('./voice');
 const { normalizePomodoroPrefs } = require('./pomodoro');
 const { normalizePlanner } = require('./planner');
+const { normalizeAccentPref } = require('./uiTheme');
 
 /* ================= 设置 schema（落盘与读盘字段一致） ================= */
 
@@ -45,6 +46,8 @@ function defaultSettings() {
     planner: null, // { items: [{id,text,date,done,note}] }
     // 学英语偏好（难度/主题；详见 config.english）
     english: null,
+    // 通用设置（UI 主题色 accent；清洗逻辑在 shared/uiTheme.js；2026-09-17 起）
+    uiPrefs: null, // { accent: 'blue' | 'purple' | ... }
   };
 }
 
@@ -90,6 +93,7 @@ function normalizeSettings(raw) {
   out.pomodoro = normalizePomodoroPrefs(raw.pomodoro);
   out.planner = normalizePlanner(raw.planner);
   if (raw.english && typeof raw.english === 'object') out.english = { ...raw.english };
+  out.uiPrefs = normalizeAccentPref(raw.uiPrefs);
   return out;
 }
 
