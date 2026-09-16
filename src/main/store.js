@@ -5,7 +5,7 @@
  */
 const fs = require('fs');
 const path = require('path');
-const { normalizeSettings, defaultSettings } = require('../shared/settings');
+const { normalizeSettings, defaultSettings } = require('../shared/content');
 
 class Store {
   constructor(dir) {

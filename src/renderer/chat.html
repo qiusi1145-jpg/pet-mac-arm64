@@ -19,9 +19,31 @@
     .msg.sys { background: none; color: #999; font-size: 11px; text-align: center;
       max-width: 100%; padding: 2px; }
     #inputRow { display: flex; gap: 6px; margin-top: 8px; }
+    /* 语音"正在输入"实时条：在听 / 正在识别 / 实时字幕 + 电平条 */
+    #live { display: flex; align-items: center; gap: 6px; margin-top: 8px; padding: 4px 8px;
+      border-radius: 8px; background: #eef6ff; border: 1px solid #cfe3f7; color: #2b5d8f;
+      font-size: 12px; }
+    #live[hidden] { display: none; }
+    #live.busy { background: #fff5e6; border-color: #f0d5a8; color: #9a6417; }
+    #live .mic { flex: 0 0 auto; }
+    #live .txt { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+      white-space: nowrap; }
+    #live .bar { flex: 0 0 44px; height: 6px; border-radius: 3px; background: rgba(43,93,143,.18);
+      overflow: hidden; }
+    #live .bar > i { display: block; height: 100%; width: 0; background: #2f9bff; }
     #input { flex: 1 1 auto; font: 13px/1.6 "Microsoft YaHei"; padding: 5px 8px;
       border: 1px solid #ccc; border-radius: 7px; }
     #sendBtn { flex: 0 0 auto; }
+    /* 请求进行中才出现的「停止」（大模型可能要等几秒；点了立刻取消在途请求） */
+    #stopBtn { flex: 0 0 auto; background: #fff2f2; border-color: #e8b4b4; color: #c0392b; }
+    #stopBtn[hidden] { display: none; }
+    #micBtn { flex: 0 0 auto; background: #f2f2f2; color: #333; border-color: #bbb;
+      font-weight: 400; padding: 4px 10px; }
+    #micBtn:hover { background: #e5f1fb; }
+    #micBtn.on { background: #e05555; border-color: #c23b3b; color: #fff; }
+    /* 按住说话时：蓝色（区别于"对话中"的红色）。放在 .on 之后 → 同时命中时以"正在按"为准 */
+    #micBtn.hold { background: #2f9bff; border-color: #1b7fdd; color: #fff; }
+    #micBtn[hidden] { display: none; }
     button { font: 13px/1.6 "Microsoft YaHei"; padding: 4px 14px; border-radius: 7px;
       border: 1px solid #1b7fdd; background: #2f9bff; color: #fff; font-weight: 700; cursor: pointer; }
     button:hover { background: #1f8aef; }
@@ -29,8 +51,15 @@
 </head>
 <body>
   <main id="msgs"></main>
+  <div id="live" hidden>
+    <span class="mic">🎤</span>
+    <span class="txt">在听…</span>
+    <span class="bar"><i></i></span>
+  </div>
   <footer id="inputRow">
     <input id="input" type="text" maxlength="500" placeholder="和桌宠聊聊…（Enter 发送）" spellcheck="false" />
+    <button id="micBtn" hidden title="语音对话：点击进入 / 再点退出，或按住说话（键位可自定义）">🎤</button>
+    <button id="stopBtn" hidden title="取消这次请求（Esc）">停止</button>
     <button id="sendBtn">发送</button>
   </footer>
   <script src="./chat.js"></script>

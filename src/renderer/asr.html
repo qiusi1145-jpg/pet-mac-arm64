@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta
+    http-equiv="Content-Security-Policy"
+    content="default-src 'self'; script-src 'self' 'unsafe-inline' blob:; style-src 'self' 'unsafe-inline'; media-src 'self' blob:; connect-src 'self'"
+  />
+  <title>voice</title>
+</head>
+<body>
+  <!-- 语音采集 + 推理宿主页（**隐藏窗口，无 UI**）。
+       存在的唯一理由：把 AudioWorklet 采集与 ONNX 推理关在同一个渲染进程里，
+       于是 PCM 一次都不跨进程 —— 主进程（16ms 光标推送 / 像素穿透判定）零阻塞。 -->
+  <script src="./asr.js"></script>
+</body>
+</html>

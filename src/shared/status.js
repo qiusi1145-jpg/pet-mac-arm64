@@ -106,6 +106,34 @@ function settleStatus(st, now, cfg = CFG.status) {
   return n;
 }
 
+/**
+ * 冻结：把"这段时间"从时间轴上抹掉 —— 桌宠**不在你面前**时（应用关闭 / 窗口隐藏）不做结算。
+ *
+ * 为什么需要（用户 2026-09-16 反馈）：旧行为是启动时一次性结算离线时长，于是关掉电脑过一夜，
+ * 第二天打开看到的是情绪与饱食度被算到 0、半透明的"快饿死的"宠物 —— 体感很差。
+ * 冻结后的规则变成：**只有它在你眼前时，时间才算数**。
+ *
+ * 三处都要拨（漏掉任何一处都会出问题）：
+ *  · `lastTs → now`：否则下一次结算会把这段又被抹掉的时间再算一遍；
+ *  · `lastActive → now`：否则 `now - lastActive - idleDecayDelayMs` 一上来就是大数，
+ *    打开后会**立即按最高速率**掉情绪（比不冻结更糟，等于"一见面就翻脸"）；
+ *  · `interactions` 平移同样时长：它们是"最近互动"的滚动窗口，只有落到新时间轴上语义才不变。
+ *    ⚠ 必须**先按旧时间轴裁剪、再平移** —— 反过来会把两天前的旧互动平移到"刚刚"，
+ *    直接被算成高频疲劳（这是很容易写错的一步）。
+ *
+ * 不修改入参，返回新对象。`now`/`lastTs` 非数字时按"无需平移"处理。
+ */
+function freezeStatus(st, now, cfg = CFG.status) {
+  const n = { ...st };
+  const then = Number.isFinite(Number(st.lastTs)) ? Number(st.lastTs) : now;
+  const shift = Math.max(0, now - then);
+  const kept = pruneInteractions(Array.isArray(st.interactions) ? st.interactions : [], then, cfg);
+  n.interactions = kept.map((t) => t + shift);
+  n.lastActive = now;
+  n.lastTs = now;
+  return n;
+}
+
 /** 好感度：注入可控随机数 rng∈[0,1)。命中则 +1（不超上限）。返回 {affinity, rolled, level?} */
 function rollAffinity(st, rng, cfg = CFG.status) {
   const rolled = rng() < cfg.affinityChance;
@@ -122,6 +150,11 @@ function crossedMilestone(before, after, cfg = CFG.status) {
   const b = Math.floor(before / step), a = Math.floor(after / step);
   for (let lv = b + 1; lv <= a; lv++) out.push(lv * step);
   return out;
+}
+
+/** 切换“状态图”可见性（双形态换身体只影响视觉，不影响任何状态数值或点击判定）。 */
+function nextStateVisual(visible) {
+  return !visible;
 }
 
 /** UI 汇总：取整后的数值 + 是否低状态（任一归零）+ 目标不透明度。 */
@@ -145,7 +178,9 @@ module.exports = {
   feed,
   rapidInteract,
   settleStatus,
+  freezeStatus,
   rollAffinity,
   crossedMilestone,
   deriveStatus,
+  nextStateVisual,
 };

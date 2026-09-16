@@ -13,6 +13,12 @@
     body { display: flex; flex-direction: column; box-sizing: border-box; padding: 12px 14px; }
     header h1 { font-size: 15px; margin: 0 0 2px; }
     header .tip { color: #888; font-size: 12px; margin-bottom: 8px; }
+    #engineBox { border: 1px solid #e0e0e0; border-radius: 8px; background: #fff;
+      padding: 8px 10px; margin-bottom: 10px; }
+    #engineBox .et { color: #2f6fb8; font-weight: 700; font-size: 13px; margin-bottom: 5px; }
+    #engineBox select { width: 100%; font: 13px/1.6 "Microsoft YaHei"; padding: 3px 7px;
+      border: 1px solid #ccc; border-radius: 6px; background: #fff; }
+    #engineBox .eh { color: #999; font-size: 11px; margin: 5px 0 0; }
     #addRow { display: flex; flex-direction: column; gap: 6px; padding: 8px;
       border: 1px solid #e0e0e0; border-radius: 8px; background: #fff; }
     #addRow input { font: 13px/1.6 "Microsoft YaHei"; padding: 4px 8px;
@@ -31,6 +37,37 @@
     .row .delBtn { flex: 0 0 auto; border: none; background: none; color: #999; font-size: 13px; }
     .row .delBtn:hover { color: #e05555; }
     .empty { color: #aaa; text-align: center; padding: 24px 0; }
+    /* ---- 大模型（LLM）折叠区：默认收起，点开才占地方（窗口只有 460x500） ---- */
+    details.llm { border: 1px solid #e0e0e0; border-radius: 8px; background: #fff;
+      padding: 6px 10px; margin-bottom: 10px; }
+    details.llm > summary { cursor: pointer; color: #2f6fb8; font-weight: 700; font-size: 13px;
+      outline: none; }
+    details.llm[open] > summary { margin-bottom: 6px; }
+    .fld { display: flex; align-items: center; gap: 6px; margin: 4px 0; }
+    .fld > label { flex: 0 0 84px; color: #555; font-size: 12px; }
+    .fld > input, .fld > select, .fld > textarea { flex: 1 1 auto; min-width: 0;
+      font: 12px/1.5 "Microsoft YaHei"; padding: 3px 6px; border: 1px solid #ccc; border-radius: 6px; }
+    .fld > textarea { height: 46px; resize: vertical; }
+    .fld > label.chk { flex: 1 1 auto; display: flex; align-items: center; gap: 5px; }
+    .fld .hint { color: #999; font-size: 11px; }
+    .btnRow { display: flex; align-items: center; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
+    #llmTestResult { font-size: 12px; margin-top: 5px; white-space: pre-wrap; word-break: break-all; }
+    #llmTestResult.ok { color: #2a8a3a; }
+    #llmTestResult.err { color: #cc4444; }
+    #llmKeyStatus { color: #666; font-size: 11px; }
+    /* ---- 请求日志面板 ---- */
+    #llmLogs { max-height: 132px; overflow: auto; margin-top: 5px;
+      border: 1px solid #eee; border-radius: 6px; background: #fafafa; }
+    #llmLogs .lg { display: flex; gap: 6px; padding: 3px 6px; font-size: 11px; color: #444;
+      border-bottom: 1px solid #f0f0f0; }
+    #llmLogs .lg .t { flex: 0 0 52px; color: #999; }
+    #llmLogs .lg .p { flex: 0 0 62px; font-weight: 700; }
+    #llmLogs .lg .p.llm { color: #2a8a3a; }
+    #llmLogs .lg .p.fallback { color: #c07a1a; }
+    #llmLogs .lg .p.retry { color: #888; }
+    #llmLogs .lg .d { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+      white-space: nowrap; }
+    #llmLogs .none { color: #aaa; padding: 6px; font-size: 11px; }
   </style>
 </head>
 <body>
@@ -38,6 +75,84 @@
     <h1>聊天设置</h1>
     <div class="tip">输入里包含关键词时桌宠按对应的回复说话；同时命中多条时用关键词最长的那条。忽略大小写。</div>
   </header>
+  <section id="engineBox">
+    <div class="et">回复引擎</div>
+    <select id="engine"></select>
+    <p class="eh" id="engineTip"></p>
+  </section>
+
+  <section id="logBox">
+    <div class="et">聊天记录</div>
+    <p class="eh" id="logStatus"></p>
+    <div class="btnRow">
+      <button id="logClear">清空聊天记录</button>
+    </div>
+  </section>
+
+  <details class="llm" id="llmBox">
+    <summary>大模型设置（密钥 / 模型 / 人设 / 请求日志）</summary>
+
+    <div class="fld">
+      <label>服务商</label>
+      <select id="llmProvider"></select>
+    </div>
+    <div class="fld">
+      <label>base_url</label>
+      <input id="llmBaseUrl" type="text" spellcheck="false" placeholder="https://api.deepseek.com/v1" />
+    </div>
+    <div class="fld">
+      <label>模型名</label>
+      <input id="llmModel" type="text" spellcheck="false" placeholder="deepseek-chat" />
+    </div>
+    <div class="fld">
+      <label>密钥</label>
+      <input id="llmKey" type="password" spellcheck="false" placeholder="sk-…（存本机独立文件，不进 settings.json）" />
+    </div>
+    <div class="btnRow">
+      <button id="llmKeySave">保存密钥</button>
+      <button id="llmKeyClear">清除密钥</button>
+      <button id="llmKeyReveal">打开密钥文件位置</button>
+      <span id="llmKeyStatus"></span>
+    </div>
+
+    <div class="fld">
+      <label>人设</label>
+      <textarea id="llmPersona" spellcheck="false" placeholder="留空 = 用 config 里的默认人设"></textarea>
+    </div>
+    <div class="fld">
+      <label>温度</label>
+      <input id="llmTemp" type="number" min="0" max="2" step="0.1" />
+      <label class="hint">最大字数</label>
+      <input id="llmMaxChars" type="number" min="20" max="1000" step="10" />
+      <label class="hint">超时(ms)</label>
+      <input id="llmTimeout" type="number" min="1000" max="120000" step="500" />
+    </div>
+    <div class="fld">
+      <label>历史轮数</label>
+      <input id="llmHistory" type="number" min="0" max="30" step="1" />
+      <label class="hint">重试次数</label>
+      <input id="llmRetry" type="number" min="0" max="5" step="1" />
+    </div>
+    <div class="fld">
+      <label class="chk"><input id="llmStream" type="checkbox" /> 流式输出（打字机效果）</label>
+    </div>
+    <div class="fld">
+      <label class="chk"><input id="llmForceFallback" type="checkbox" /> 调试：强制回落（测兜底不用拔网线）</label>
+    </div>
+
+    <div class="btnRow">
+      <button id="llmSave" class="primary">保存设置</button>
+      <button id="llmTest">测试连接</button>
+      <span id="llmKeyPath" class="hint"></span>
+    </div>
+    <div id="llmTestResult"></div>
+
+    <div class="btnRow" style="margin-top:8px;">
+      <span class="hint" style="flex:1 1 auto;">请求日志（最近 50 条：耗时 / 状态码 / tokens / 走哪条路径）</span>
+      <button id="llmLogClear">清空</button>
+    </div>
+    <div id="llmLogs"></div>
+  </details>
   <section id="addRow">
     <input id="keyword" type="text" maxlength="100" placeholder="关键词，例如：你好" spellcheck="false" />
     <input id="reply" type="text" maxlength="500" placeholder="桌宠的回复，例如：嗨，主人！" spellcheck="false" />

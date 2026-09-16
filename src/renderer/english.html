@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta
+    http-equiv="Content-Security-Policy"
+    content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:"
+  />
+  <title>学英语</title>
+  <link rel="stylesheet" href="english.css" />
+</head>
+<body data-theme="aurora" data-soft="1">
+  <header id="topbar">
+    <div class="brand"><span class="logo">🎓</span><span>学英语</span></div>
+    <div id="levelBar" class="levels" title="难度"></div>
+    <button id="listBtn" class="icon-btn" title="词表">📖</button>
+    <button id="gearBtn" class="icon-btn" title="设置">⚙</button>
+  </header>
+
+  <nav id="tabs">
+    <button class="tab active" data-tab="translate">📝 翻译</button>
+    <button class="tab" data-tab="cloze">🧩 填空</button>
+    <button class="tab" data-tab="vocab">📇 背单词</button>
+    <button class="tab" data-tab="stats">📊 统计</button>
+  </nav>
+
+  <main id="main">
+    <!-- ===== 翻译练习 ===== -->
+    <section class="panel active" id="tab-translate">
+      <div class="card">
+        <div class="row head-row">
+          <span class="dir-badge" id="trDir">中 → 英</span>
+          <span class="word-tag" id="trWord"></span>
+        </div>
+        <div class="prompt" id="trPrompt"></div>
+      </div>
+      <div class="card">
+        <textarea id="trInput" rows="3" placeholder="输入译文，Enter 提交（Shift+Enter 换行）" spellcheck="false"></textarea>
+        <div class="row btn-row">
+          <button id="trSubmit" class="btn primary">提交</button>
+          <button id="trNext" class="btn">换一题</button>
+        </div>
+      </div>
+      <div class="card verdict" id="trVerdict" hidden>
+        <div class="v-title" id="trVTitle"></div>
+        <div class="v-ans" id="trVAns"></div>
+      </div>
+      <div class="stat-line" id="trStat"></div>
+    </section>
+
+    <!-- ===== 选词填空 ===== -->
+    <section class="panel" id="tab-cloze">
+      <div class="card">
+        <div class="row head-row">
+          <span class="dir-badge" id="czSrc">真题</span>
+          <span class="word-tag" id="czWord"></span>
+        </div>
+        <div class="prompt" id="czPrompt"></div>
+      </div>
+      <div class="choices" id="czChoices"></div>
+      <div class="card verdict" id="czVerdict" hidden>
+        <div class="v-title" id="czVTitle"></div>
+        <div class="v-ans" id="czVAns"></div>
+      </div>
+      <div class="row btn-row"><button id="czNext" class="btn primary" hidden>下一题</button></div>
+      <div class="stat-line" id="czStat"></div>
+    </section>
+
+    <!-- ===== 背单词（出卡流程由 english.js 按阶段动态渲染进 #vbBody）===== -->
+    <section class="panel" id="tab-vocab">
+      <div class="row" id="vbModes"></div>
+      <div class="stat-line" id="vbStat"></div>
+      <div id="vbBody"></div>
+    </section>
+
+    <!-- ===== 学习统计 ===== -->
+    <section class="panel" id="tab-stats">
+      <div id="statsBody"></div>
+    </section>
+
+    <div class="empty" id="emptyTip" hidden>
+      <div class="empty-icon">📭</div>
+      <div>该难度暂无数据</div>
+    </div>
+  </main>
+
+  <!-- 设置面板 -->
+  <div id="themePanel" hidden>
+    <div class="tp-card tp-wide">
+      <div class="tp-title">设置 <button id="tpClose" class="icon-btn">✕</button></div>
+      <div class="tp-sec">主题</div>
+      <div id="tpSwatches"></div>
+      <div class="tp-sec">显示</div>
+      <div class="tp-row">
+        <span class="tp-label">配色浓度</span>
+        <div class="seg" id="setSoft">
+          <button data-v="1" type="button">柔和</button><button data-v="0" type="button">标准</button>
+        </div>
+      </div>
+      <div class="tp-sec">背单词</div>
+      <div class="tp-row">
+        <span class="tp-label">每日新词</span>
+        <input id="setDaily" type="range" min="5" max="100" step="5" />
+        <span class="tp-val" id="setDailyV"></span>
+      </div>
+      <div class="tp-row">
+        <span class="tp-label">复习 : 新词</span>
+        <select id="setRatio"></select>
+      </div>
+      <div class="tp-row">
+        <span class="tp-label">出题题型</span>
+        <label class="ck"><input type="checkbox" id="setChoice" />四选一</label>
+        <label class="ck"><input type="checkbox" id="setSpell" />拼写</label>
+      </div>
+      <div class="tp-sec">桌宠催背</div>
+      <div class="tp-row">
+        <span class="tp-label">提醒频率</span>
+        <select id="setRemind"></select>
+      </div>
+      <div class="tp-hint">催背会以桌宠气泡提示当天剩余词量，只在 8:00–23:00 弹出；关闭后不再打扰。</div>
+    </div>
+  </div>
+
+  <!-- 词表浏览（搜索 + 卡片详情 + 生词本标记） -->
+  <div id="listPanel" hidden>
+    <div class="tp-card tp-wide">
+      <div class="tp-title">
+        词表 <span id="wlCount" class="wl-count"></span>
+        <button id="wlBack" class="icon-btn" hidden>←</button>
+        <button id="wlClose" class="icon-btn">✕</button>
+      </div>
+      <div id="wlSearchRow" class="tp-row">
+        <input id="wlSearch" class="wl-search" placeholder="搜索单词…" spellcheck="false" />
+      </div>
+      <div id="wlBody"></div>
+    </div>
+  </div>
+
+  <div id="toast" hidden></div>
+  <script src="english.js"></script>
+</body>
+</html>

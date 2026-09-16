@@ -2,8 +2,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
-  createDefaultStatus, registerInteraction, feed, rapidInteract, settleStatus,
-  rollAffinity, crossedMilestone, deriveStatus,
+  createDefaultStatus, registerInteraction, feed, rapidInteract, settleStatus, freezeStatus,
+  rollAffinity, crossedMilestone, deriveStatus, nextStateVisual,
 } = require('../../src/shared/status');
 
 const T0 = 1_700_000_000_000;
@@ -125,4 +125,65 @@ test('deriveStatus：取整 + 归零判半透明 + 不叠加恢复', () => {
   assert.equal(ok.low, true, '体力归零也算');
   const fine = deriveStatus({ mood: 50, energy: 1, satiety: 90, affinity: 0 });
   assert.equal(fine.low, false); assert.equal(fine.opacity, 1);
+});
+
+test('状态图可见性：开关返回相反的视觉状态', () => {
+  assert.equal(nextStateVisual(false), true);
+  assert.equal(nextStateVisual(true), false);
+});
+
+/* ================= 冻结：桌宠"不在你面前"时不许挨饿（2026-09-16 用户需求） ================= */
+
+test('★ 冻结：关掉电脑过一夜后，情绪/体力/饱食度一点都不能掉', () => {
+  const overnight = 12 * 3600 * 1000;   // 12 小时
+  let s = createDefaultStatus(T0);
+  s = registerInteraction(s, T0 + 60_000);
+  const before = { ...s };
+  const frozen = freezeStatus(s, T0 + overnight);
+  // 关键：如果这里走了 settleStatus，情绪与饱食会被算到 0（就是用户看到的"后台挨饿"）
+  assert.equal(frozen.mood, before.mood, '情绪不许掉');
+  assert.equal(frozen.satiety, before.satiety, '饱食度不许掉');
+  assert.equal(frozen.energy, before.energy, '体力也不许变（既不掉也不补）');
+  assert.equal(frozen.affinity, before.affinity);
+  assert.notEqual(settleStatus(s, T0 + overnight).satiety, before.satiety, '对照：老行为确实会把饱食算掉');
+});
+
+test('★ 冻结：lastTs/lastActive 都要拨到当前时刻（否则刚打开就以最高速率掉情绪）', () => {
+  const overnight = 12 * 3600 * 1000;
+  let s = createDefaultStatus(T0);
+  s = registerInteraction(s, T0 + 60_000);
+  const now = T0 + overnight;
+  const frozen = freezeStatus(s, now);
+  assert.equal(frozen.lastTs, now, 'lastTs 不拨 → 下次结算会把这 12 小时再算一遍');
+  assert.equal(frozen.lastActive, now, 'lastActive 不拨 → 一打开就按最高速率掉情绪');
+  // 换句话说：打开后的 30 分钟内不该有任何情绪衰减（"刚回来"的宽限期）
+  const soon = settleStatus(frozen, now + 5 * 60 * 1000);
+  assert.equal(soon.mood, frozen.mood, '打开 5 分钟后情绪应完全没变');
+});
+
+test('冻结：interactions 先按旧时间轴裁剪、再平移（否则旧互动会变成"刚刚"触发疲劳）', () => {
+  const cfg = { fatigueWindowMs: 5 * 60 * 1000 };
+  const now = T0 + 12 * 3600 * 1000;
+  const base = { mood: 50, energy: 50, satiety: 50, affinity: 0, lastActive: T0, lastTs: T0 };
+  // ① 冻结**之前**就已经出了疲劳窗口的互动：不许被平移"复活"成刚刚发生
+  const stale = T0 - 10 * 60 * 1000;
+  assert.deepEqual(freezeStatus({ ...base, interactions: [stale] }, now, cfg).interactions, []);
+  // ② 窗口内的互动：跟着平移，保持"刚刚发生过"的语义（平移量 = now - lastTs）
+  const recent = T0 - 60 * 1000;
+  assert.deepEqual(
+    freezeStatus({ ...base, interactions: [recent] }, now, cfg).interactions,
+    [recent + 12 * 3600 * 1000],
+  );
+});
+
+test('冻结：时间戳缺失/非法时不炸，按"无需平移"处理', () => {
+  const s = { mood: 10, energy: 20, satiety: 30, affinity: 1, interactions: null };
+  const f = freezeStatus(s, T0);
+  assert.equal(f.lastTs, T0); assert.equal(f.lastActive, T0);
+  assert.deepEqual(f.interactions, []);
+  assert.equal(freezeStatus({ ...s, lastTs: 'nonsense' }, T0).lastTs, T0);
+  // 不修改入参
+  const src = { mood: 1, energy: 2, satiety: 3, affinity: 4, lastTs: T0, lastActive: T0, interactions: [] };
+  freezeStatus(src, T0 + 1000);
+  assert.equal(src.lastTs, T0, '入参不许被修改');
 });

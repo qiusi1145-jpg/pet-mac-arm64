@@ -90,7 +90,8 @@ const scenarios = {
     return assertMap(results);
   },
 
-  /** 眨眼：视觉层闭眼图可显示/隐藏，且判定区域不因此变化。 */
+  /** 眨眼：视觉层闭眼图可显示/隐藏，且判定区域不因此变化；
+   *  降级单图眨眼走真实播放路径（整帧接管本体 → 播完恢复，时长来自 blink.zeroFrameMs）。 */
   async blink(ctx) {
     const { js } = ctx;
     await waitFor(js, 'window.__petReady && window.__petState().petLoaded', 12000, 'renderer ready + pet');
@@ -115,7 +116,25 @@ const scenarios = {
       const hitWhileHidden = T.isInteractableAt(hit.x, hit.y);
       return { visible, hidden, hitWhileVisible, hitWhileHidden };
     })()`);
-    return r.visible && r.hidden && r.hitWhileVisible === true && r.hitWhileHidden === true;
+    if (!(r.visible && r.hidden && r.hitWhileVisible === true && r.hitWhileHidden === true)) return false;
+
+    // 降级单图眨眼（真实播放路径）：起播 → 本体隐藏、叠加显示 → ~zeroFrameMs 后恢复本体
+    const seq = await js(`(async () => {
+      const T = window.__petTest;
+      const started = T.playBlinkAnim();
+      await new Promise((r2) => setTimeout(r2, 50));
+      const mid = T.state();
+      const bodyHidden = document.getElementById('pet').style.display === 'none';
+      const blinkShown = document.getElementById('blink').style.display === 'block';
+      await new Promise((r2) => setTimeout(r2, 400)); // 150ms 帧时长 + 余量
+      const end = T.state();
+      const bodyBack = document.getElementById('pet').style.display !== 'none';
+      const blinkHidden = document.getElementById('blink').style.display === 'none';
+      return { started, playingMid: mid.blinkPlaying, bodyHidden, blinkShown,
+        done: !end.blinkPlaying, bodyBack, blinkHidden };
+    })()`);
+    return seq && seq.started === true && seq.playingMid === true && seq.bodyHidden === true &&
+      seq.blinkShown === true && seq.done === true && seq.bodyBack === true && seq.blinkHidden === true;
   },
 
   /** 眨眼动画（多帧）：依次播放两帧、帧间切换 src、播完恢复常态。 */
@@ -147,6 +166,46 @@ const scenarios = {
     })()`);
     return seq && seq.started === true && seq.frames === 2 &&
       seq.firstVisible === true && seq.doneHidden === true && seq.firstSrc !== seq.secondSrc;
+  },
+
+  /** 随机特效动画：注入帧 → 整帧接管本体（本体隐藏、叠加层显示）、播放中判定不变、
+   *  与眨眼互斥（特效播放中眨眼拒绝起播）、播完恢复本体。 */
+  async fxAnim(ctx) {
+    const { js } = ctx;
+    await waitFor(js, 'window.__petReady && window.__petState().petLoaded', 12000, 'renderer ready + pet');
+    const r = await js(`(async () => {
+      const T = window.__petTest;
+      const mk = (color) => {
+        const c = document.createElement('canvas'); c.width = 8; c.height = 8;
+        const g = c.getContext('2d'); g.fillStyle = color; g.fillRect(0, 0, 8, 8);
+        return c.toDataURL('image/png');
+      };
+      T.setEffectFrames([
+        { src: mk('#ff0000'), durationMs: 120 },
+        { src: mk('#00ff00'), durationMs: 120 },
+        { src: mk('#0000ff'), durationMs: 120 },
+      ]);
+      const s0 = T.state();
+      const anchorPt = { x: s0.pet.x + Math.round(s0.pet.anchor.x), y: s0.pet.y + Math.round(s0.pet.anchor.y) };
+      const hitBefore = T.isInteractableAt(anchorPt.x, anchorPt.y);
+      const started = T.playEffect();
+      await new Promise((r2) => setTimeout(r2, 60));   // 播放中
+      const playingMid = T.state().fxAnim.playing;
+      const blinkShownMid = document.getElementById('blink').style.display === 'block';
+      const bodyHiddenMid = document.getElementById('pet').style.display === 'none';
+      const hitMid = T.isInteractableAt(anchorPt.x, anchorPt.y); // 红线：判定仍用真实身体位图
+      const blinkRejected = T.playBlinkAnim() === false;         // 互斥：特效播放中眨眼不起播
+      await new Promise((r2) => setTimeout(r2, 480));  // 3 帧 ×120ms + 余量 → 播完
+      const st = T.state();
+      const bodyBack = document.getElementById('pet').style.display !== 'none';
+      const blinkHiddenEnd = document.getElementById('blink').style.display === 'none';
+      T.setEffectFrames([]);
+      return { started, playingMid, blinkShownMid, bodyHiddenMid, hitBefore, hitMid,
+        blinkRejected, done: !st.fxAnim.playing, bodyBack, blinkHiddenEnd };
+    })()`);
+    return r && r.started === true && r.playingMid === true && r.blinkShownMid === true &&
+      r.bodyHiddenMid === true && r.hitBefore === true && r.hitMid === true &&
+      r.blinkRejected === true && r.done === true && r.bodyBack === true && r.blinkHiddenEnd === true;
   },
 
   /** 状态切换 = 换一具身体：状态形象有自己的位图/锚点/尺寸，判定等一切随当前身体走；
@@ -204,9 +263,9 @@ const scenarios = {
   },
 
   /**
-   * 锁定并保持始终置于顶层（功能 4）：锁定 → 主进程置顶级别切换为 screen-saver、
-   * 整窗强制穿透（即使光标在宠物实体像素上）、托盘出现“解锁（保底入口）”；
-   * 解锁 → 恢复 floating 常规置顶与正常穿透语义、托盘文本更新。
+   * 锁定语义（功能 4）：置顶级别恒为最高档 screen-saver（锁定/解锁差异只在整窗穿透），
+   * 锁定 → 整窗强制穿透（即使光标在宠物实体像素上）、托盘出现“解锁（保底入口）”；
+   * 解锁 → 恢复正常穿透语义、托盘文本更新。
    */
   async lock(ctx) {
     const { js, sleep, mainState } = ctx;
@@ -214,13 +273,13 @@ const scenarios = {
     const results = [];
 
     let ms = mainState();
-    results.push({ name: `初始未锁定且为常规置顶(level=${ms.lockLevel})`, ok: ms.locked === false && ms.lockLevel === 'floating' });
+    results.push({ name: `初始未锁定且为最高置顶(level=${ms.lockLevel})`, ok: ms.locked === false && ms.lockLevel === 'screen-saver' });
 
     // 锁定（渲染层长按 3s 的切换路径）
     await js('window.__petTest.toggleLock()');
     await sleep(200);
     ms = mainState();
-    results.push({ name: `锁定后用最高置顶级别(level=${ms.lockLevel})`, ok: ms.locked === true && ms.lockLevel === 'screen-saver' });
+    results.push({ name: `锁定后仍为最高置顶(level=${ms.lockLevel})`, ok: ms.locked === true && ms.lockLevel === 'screen-saver' });
     results.push({ name: '锁定后托盘出现“解锁（保底入口）”', ok: ms.trayLabels.includes('解锁（保底入口）') });
 
     // 锁定态：光标落在宠物实体像素上也整窗穿透
@@ -243,11 +302,11 @@ const scenarios = {
     const lockedHit = await js(probe);
     results.push({ name: '锁定态实体像素上也整窗穿透', ok: !!lockedHit && lockedHit.ignore === true && lockedHit.interactive === false });
 
-    // 解锁：恢复常规置顶 + 穿透语义 + 托盘文本
+    // 解锁：恢复常规穿透语义 + 托盘文本（置顶级别恒为最高档）
     await js('window.__petTest.toggleLock()');
     await sleep(200);
     ms = mainState();
-    results.push({ name: `解锁恢复常规置顶(level=${ms.lockLevel})`, ok: ms.locked === false && ms.lockLevel === 'floating' });
+    results.push({ name: `解锁保持最高置顶(level=${ms.lockLevel})`, ok: ms.locked === false && ms.lockLevel === 'screen-saver' });
     results.push({ name: '托盘文本为“锁定并保持始终置于顶层”', ok: ms.trayLabels.includes('锁定并保持始终置于顶层') });
     const unlockedHit = await js(probe);
     results.push({ name: '解锁后实体像素恢复可交互', ok: !!unlockedHit && unlockedHit.ignore === false && unlockedHit.interactive === true });
@@ -440,7 +499,100 @@ const scenarios = {
     st = mainState();
     results.push({ name: `删除规则(剩 ${st.chatRules.length} 条)`, ok: st.chatRules.length === 1 && st.chatRules[0].keyword === '你好呀' });
 
-    // ⑥ 关闭窗口（不残留）
+    // ⑥ 语音"正在输入"显示（不依赖麦克风/模型：由主进程广播驱动，与真实语音走同一条通道）
+    const liveExpr = `(() => {
+      const l = document.getElementById('live');
+      return { hidden: l.hidden, cls: l.className, txt: l.querySelector('.txt').textContent,
+               bar: l.querySelector('.bar > i').style.width };
+    })()`;
+    // ★ 呈现规则（用户定调）：被动等待唤醒（listening）时一切安静——后台监听不扰动界面；
+    //   只有真正进入对话（decoding，被唤醒/按键说话）才出现反馈。
+    ctx.voiceBroadcast('voice:state', { state: 'listening', rms: 0.2 });
+    await sleep(150);
+    live = await execIn('chatWin', liveExpr);
+    results.push({ name: '聊天窗：被动等待唤醒时不显示输入条', ok: live.hidden === true });
+    results.push({ name: '宠物：被动等待唤醒时不显示"在听"指示', ok: (await js('window.__petState().voiceIndicatorOn')) === false });
+
+    ctx.voiceBroadcast('voice:state', { state: 'decoding', rms: 0.3 });
+    await sleep(150);
+    let live = await execIn('chatWin', liveExpr);
+    results.push({ name: `聊天窗：说话时出现"正在输入"条(${live.txt})`, ok: live.hidden === false && live.txt.includes('正在识别') });
+    results.push({ name: `聊天窗：电平条随音量走(${live.bar})`, ok: parseFloat(live.bar) > 0 });
+    results.push({ name: '宠物：进入对话（被唤醒/按键）时显示"在听"指示', ok: (await js('window.__petState().voiceIndicatorOn')) === true });
+
+    ctx.voiceBroadcast('voice:partial', { text: '今天天气' });
+    await sleep(150);
+    live = await execIn('chatWin', liveExpr);
+    results.push({ name: `聊天窗：实时字幕(${live.txt})`, ok: live.txt.includes('今天天气') });
+
+    // ② 语音提示条与聊天气泡**不许重叠**（用户 2026-09-16 反馈：两者都锚在宠物头顶同一处，
+    //   一行气泡会盖住提示条 24px 里的 18px，看着"互相冲突、反复闪动"）。
+    const overlapExpr = `(() => {
+      const b = document.getElementById('bubble');
+      const v = document.getElementById('voice');
+      const show = b.classList.contains('show');
+      const on = v.classList.contains('on');
+      if (!show || !on) return { ready: false, show, on };
+      const rb = b.getBoundingClientRect();
+      const rv = v.getBoundingClientRect();
+      const dy = Math.min(rb.bottom, rv.bottom) - Math.max(rb.top, rv.top);
+      const dx = Math.min(rb.right, rv.right) - Math.max(rb.left, rv.left);
+      return { ready: true, overlap: (dy > 0 && dx > 0) ? Math.round(dy) : 0,
+               b: [Math.round(rb.top), Math.round(rb.bottom)],
+               v: [Math.round(rv.top), Math.round(rv.bottom)] };
+    })()`;
+    ctx.bubble('重叠检查用气泡', 8000);
+    await sleep(200);
+    const nvOn = await js(overlapExpr);
+    results.push({
+      name: `宠物：语音条与气泡不重叠(气泡 ${(nvOn.b || []).join('..')} / 语音条 ${(nvOn.v || []).join('..')})`,
+      ok: nvOn.ready === true && nvOn.overlap === 0 && nvOn.b[1] < nvOn.v[0],
+    });
+    const bubbleTopWhenVoiceOn = nvOn.ready ? nvOn.b[0] : 0;
+
+    ctx.voiceBroadcast('voice:state', { state: 'idle', rms: 0 });
+    await sleep(150);
+    live = await execIn('chatWin', liveExpr);
+    results.push({ name: '聊天窗：说完后自动收起', ok: live.hidden === true });
+    // 语音条收起后气泡要落回原位（否则会一直悬在半空）
+    const nvOff = await js(overlapExpr);
+    results.push({
+      name: `宠物：语音条收起后气泡落回(顶 ${bubbleTopWhenVoiceOn} → ${(nvOff.b || [])[0]})`,
+      ok: nvOff.ready === true && nvOff.b[0] > bubbleTopWhenVoiceOn,
+    });
+
+    // ⑦ 识别出的"我说的那句"进入对话（who='me'）
+    ctx.pushChatMessage('我说的话', 'me');
+    await sleep(150);
+    const meMsg = await execIn('chatWin', `(() => {
+      const els = document.querySelectorAll('#msgs .msg.me');
+      return els.length ? els[els.length - 1].textContent : null;
+    })()`);
+    results.push({ name: `聊天窗：我(语音)说的那句进入对话(${meMsg})`, ok: meMsg === '我说的话' });
+
+    // ⑧ 语音对话的呈现（2026-09-16）：进入后要有"在听/在想"反馈，退出后回到安静
+    ctx.voiceBroadcast('voice:dialog', { on: true, thinking: false });
+    await sleep(150);
+    const dlg = await execIn('chatWin', liveExpr);
+    results.push({ name: `聊天窗：语音对话中显示状态条(${dlg.txt})`, ok: dlg.hidden === false && dlg.txt.includes('语音对话') });
+    ctx.voiceBroadcast('voice:dialog', { on: true, thinking: true });
+    await sleep(150);
+    const think = await execIn('chatWin', liveExpr);
+    results.push({ name: `聊天窗：等模型期间显示"在想…"(${think.txt})`, ok: think.txt.includes('在想') });
+    ctx.voiceBroadcast('voice:dialog', { on: false, thinking: false });
+    await sleep(150);
+    const off = await execIn('chatWin', liveExpr);
+    results.push({ name: '聊天窗：退出语音对话后状态条消失', ok: off.hidden === true });
+
+    // ⑨ 过短没发给模型 → 状态条上给一句提示（而不是假装没发生）
+    ctx.voiceBroadcast('voice:dialog', { on: true, thinking: false });
+    ctx.voiceBroadcast('voice:discard', { reason: 'too-short-audio', text: '啊' });
+    await sleep(150);
+    const disc = await execIn('chatWin', liveExpr);
+    results.push({ name: `聊天窗：过短时提示没听清(${disc.txt})`, ok: disc.txt.includes('没听清') });
+    ctx.voiceBroadcast('voice:dialog', { on: false, thinking: false });
+
+    // ⑧ 关闭窗口（不残留）
     await execIn('chatWin', `window.close()`);
     await execIn('chatSettingsWin', `window.close()`);
     await sleep(200);
@@ -462,7 +614,7 @@ const scenarios = {
     results.push({ name: `抛掷后物理激活(phys=${phys1})`, ok: phys1 === true });
     results.push({ name: '抛掷确实改变了位置', ok: Math.abs(midY - pre) > 2 });
 
-    // 等它落地回待机（最多 9s），最终静止在地面
+    // 等它落地回待机（最多 9s），最终静止在地面（像素级碰撞：碰撞盒底边贴地）
     try {
       await waitFor(js, 'window.__petState().physActive === false', 9000, '物理结束');
     } catch (e) {
@@ -471,9 +623,10 @@ const scenarios = {
       throw e;
     }
     const st = await js('window.__petState()');
-    const floorY = st.world.h - st.pet.h;
+    const colBottom = st.pet.col.oy + st.pet.col.h;
+    const floorY = st.world.h - colBottom;
     results.push({
-      name: `落地回待机且在地面(y=${st.pet.y.toFixed(0)}≈${Math.round(floorY)})`,
+      name: `落地回待机且实体贴地(y=${st.pet.y.toFixed(0)}≈${Math.round(floorY)})`,
       ok: Math.abs(st.pet.y - floorY) < 3,
     });
     return assertMap(results);
@@ -498,11 +651,12 @@ const scenarios = {
     results.push({ name: '低速靠近窗口顶沿 → 吸附成功', ok: snapped === true });
     const info = await js('window.__petTest.snapInfo()');
     results.push({ name: '吸附记录窗口句柄', ok: !!info && info.handle === 'fake-win' });
-    // 底边贴窗口顶：pet.y(内容) = (top - originY) - petH = winTop - petH
+    // 碰撞盒底边贴窗口顶：pet.y(内容) = (top - originY) - (col.oy + col.h)
     const st = await js('window.__petState()');
+    const colBottom = st.pet.col.oy + st.pet.col.h;
     results.push({
-      name: `吸附后底边贴窗口顶(y=${st.pet.y.toFixed(0)}≈${winTop - petH})`,
-      ok: Math.abs(st.pet.y - (winTop - petH)) < 1,
+      name: `吸附后实体底边贴窗口顶(y=${st.pet.y.toFixed(0)}≈${winTop - colBottom})`,
+      ok: Math.abs(st.pet.y - (winTop - colBottom)) < 1,
     });
 
     // 窗口仍在 → 不脱落
@@ -615,7 +769,7 @@ const scenarios = {
   },
 
   /**
-   * 应用内图片选择器（背景模式 —— "更换宠物"已移除，宠物素材走素材根目录/开发者模式）：
+   * 应用内图片选择器（背景模式 —— "更换宠物"已移除，宠物素材走素材根目录）：
    * 打开 → 列到 fixture 图片 → 面板参与命中判定 → 选中"设为背景" → 真实导入/设置路径 →
    * 背景生效且面板自动关闭。
    */
@@ -669,7 +823,8 @@ const scenarios = {
     if (!bgSrc) { console.error('[scenario] 缺 PET_BG_PATH'); return false; }
 
     const st = await js('window.__petState()');
-    const groundY = st.world.h - st.pet.h;
+    // “站在地面”= 碰撞盒（不透明像素）贴地，不是整图贴地（透明边距悬在地面下）
+    const groundY = st.world.h - (st.pet.col.oy + st.pet.col.h);
     const x0 = Math.max(0, Math.round(st.world.w / 2 - st.pet.w / 2));
     await js(`window.__petTest.placePet(${x0}, ${groundY})`); // 先摆到地面，背景才能“贴人物底边”
 
@@ -951,6 +1106,156 @@ const scenarios = {
       name: `休息结束体力回满 energy=${st.status.energy.toFixed(1)}、opacity=${st.petOpacity}`,
       ok: st.status.energy >= 99.5 && st.petOpacity === '1' && rr.active === false,
     });
+
+    return assertMap(results);
+  },
+
+  /**
+   * 学习菜单三件套（2026-09-14 新增）：主菜单结构 + 番茄钟 + 学习计划表 + 语音聊天设置。
+   *  · 主菜单：一级「学习」就位（学英语/番茄钟/学习计划表），学英语**已从聊天子菜单移出**，聊天新增语音聊天设置
+   *  · 番茄钟：默认 25:00 → 开始计时 → 暂停 → 自定义时长 → 落盘 settings.pomodoro
+   *  · 计划表：添加 → 渲染 → 落盘 settings.planner → 勾选完成 → 删除；右下角桌宠主图装饰已加载
+   *  · 语音设置：后台唤醒开关 + 唤醒词 + **按键说话键位（点一下→按键→录制）** → 保存 →
+ *    落盘 settings.voice，并给出关键词串预览
+   * 说明：本场景**不依赖语音模型/麦克风**（语音只验设置面板与持久化），任何机器都能跑。
+   */
+  async learn(ctx) {
+    const { js, sleep, execIn, waitForWin, mainState } = ctx;
+    await waitFor(js, 'window.__petReady && window.__petState().petLoaded', 12000, 'renderer ready + pet');
+    const results = [];
+
+    // ---------- ① 主菜单结构 ----------
+    const menu = (ctx.mainMenu() || []).filter((m) => m.id);
+    const byId = Object.fromEntries(menu.map((m) => [m.id, m]));
+    results.push({ name: '主菜单：新增一级「学习」', ok: !!byId.learn && byId.learn.label === '学习' });
+    results.push({
+      name: `主菜单：学习 ▸ ${byId.learn ? byId.learn.children.join('/') : '(缺失)'}`,
+      ok: !!byId.learn && JSON.stringify(byId.learn.children) === JSON.stringify(['english', 'pomodoro', 'planner']),
+    });
+    results.push({
+      name: `主菜单：聊天 ▸ ${byId.chat ? byId.chat.children.join('/') : '(缺失)'}`,
+      ok: !!byId.chat && JSON.stringify(byId.chat.children) === JSON.stringify(['chatOpen', 'chatSettings', 'voiceSettings']),
+    });
+    const order = menu.map((m) => m.id);
+    results.push({ name: '主菜单：学习紧跟聊天之后（学英语已移出聊天）', ok: order.indexOf('learn') === order.indexOf('chat') + 1 });
+
+    // ---------- ② 番茄钟 ----------
+    ctx.openPomodoro();
+    await waitForWin('pomodoroWin');
+    const clock0 = await execIn('pomodoroWin', `document.getElementById('clock').textContent`);
+    results.push({ name: `番茄钟：默认时长 25:00（实际 ${clock0}）`, ok: clock0 === '25:00' });
+    const chips = await execIn('pomodoroWin', `Array.from(document.querySelectorAll('#preFocus .chip')).map((b) => b.textContent)`);
+    results.push({ name: `番茄钟：预设快捷按钮(${chips.join('/')})`, ok: Array.isArray(chips) && chips.length >= 3 });
+
+    await execIn('pomodoroWin', `document.getElementById('toggleBtn').click()`);
+    await sleep(600);
+    const runningLbl = await execIn('pomodoroWin', `document.getElementById('toggleBtn').textContent`);
+    const clock1 = await execIn('pomodoroWin', `document.getElementById('clock').textContent`);
+    results.push({ name: `番茄钟：开始计时(按钮=${runningLbl} 显示=${clock1})`, ok: runningLbl === '暂停' && clock1 !== clock0 });
+    await execIn('pomodoroWin', `document.getElementById('toggleBtn').click()`); // 暂停
+    await sleep(150);
+    const pausedLbl = await execIn('pomodoroWin', `document.getElementById('toggleBtn').textContent`);
+    results.push({ name: `番茄钟：可暂停(按钮=${pausedLbl})`, ok: pausedLbl === '继续' });
+
+    // 自定义时长 → 保存 → 落盘
+    await execIn('pomodoroWin', `(() => { const i = document.getElementById('inFocus'); i.value = '33'; i.dispatchEvent(new Event('change')); })()`);
+    await execIn('pomodoroWin', `document.getElementById('saveBtn').click()`);
+    await sleep(350);
+    let st = mainState();
+    const clock2 = await execIn('pomodoroWin', `document.getElementById('clock').textContent`);
+    results.push({ name: '番茄钟：自定义时长落盘 settings.pomodoro', ok: !!(st.pomodoro && st.pomodoro.focusMin === 33) });
+    results.push({ name: `番茄钟：改时长后倒计时同步 33:00（实际 ${clock2}）`, ok: clock2 === '33:00' });
+
+    // ---------- ③ 学习计划表（含桌宠主图装饰） ----------
+    ctx.openPlanner();
+    await waitForWin('plannerWin');
+    await execIn('plannerWin', `document.getElementById('text').value = '背 50 个单词'`);
+    await execIn('plannerWin', `document.getElementById('addBtn').click()`);
+    await sleep(350);
+    const rowsExpr = `Array.from(document.querySelectorAll('#list .row')).map((r) => ({
+      tx: r.querySelector('.tx').textContent, done: r.classList.contains('done'),
+    }))`;
+    let rows = await execIn('plannerWin', rowsExpr);
+    results.push({ name: `计划表：添加并渲染(${JSON.stringify(rows[0] || null)})`, ok: rows.length === 1 && rows[0].tx === '背 50 个单词' && rows[0].done === false });
+    st = mainState();
+    results.push({
+      name: '计划表：持久化到 settings.planner',
+      ok: !!(st.planner && st.planner.items.length === 1 && st.planner.items[0].text === '背 50 个单词' && /^\d{4}-\d{2}-\d{2}$/.test(st.planner.items[0].date)),
+    });
+
+    const deco = await execIn('plannerWin', `(() => {
+      const d = document.getElementById('deco');
+      return { src: (d.getAttribute('src') || '').slice(0, 16), h: Math.round(d.getBoundingClientRect().height),
+               pe: getComputedStyle(d).pointerEvents };
+    })()`);
+    results.push({ name: `计划表：桌宠主图缩小作装饰(高=${deco.h}px, ${deco.src}…)`, ok: deco.src.startsWith('data:image') && deco.h > 8 });
+    results.push({ name: '计划表：装饰层不吃鼠标事件（纯装饰）', ok: deco.pe === 'none' });
+
+    await execIn('plannerWin', `document.querySelector('#list .row .ck').click()`);
+    await sleep(350);
+    rows = await execIn('plannerWin', rowsExpr);
+    st = mainState();
+    results.push({ name: '计划表：勾选完成（划线 + 落盘）', ok: rows[0].done === true && st.planner.items[0].done === true });
+    const prog = await execIn('plannerWin', `document.getElementById('prog').textContent`);
+    results.push({ name: `计划表：当天进度显示(${prog})`, ok: /完成 1\/1/.test(prog) });
+
+    await execIn('plannerWin', `document.querySelector('#list .row .delBtn').click()`);
+    await sleep(350);
+    rows = await execIn('plannerWin', rowsExpr);
+    st = mainState();
+    results.push({ name: '计划表：删除条目', ok: rows.length === 0 && st.planner.items.length === 0 });
+
+    // ---------- ④ 语音聊天设置 ----------
+    ctx.openVoiceSettings();
+    await waitForWin('voiceSettingsWin');
+    // 2026-09-16：不再有"4 种触发方式"（升级成语音对话）；**按键说话当晚恢复**（键位 + 全局键都回来了）
+    const wakeOn = await execIn('voiceSettingsWin', `document.getElementById('wakeEnabled').checked`);
+    results.push({ name: `语音设置：后台唤醒默认开(${wakeOn})`, ok: wakeOn === true });
+    const noModes = await execIn('voiceSettingsWin', `document.querySelectorAll('input[name=vmode]').length`);
+    results.push({ name: '语音设置：没有"触发方式"单选（已升级为语音对话）', ok: noModes === 0 });
+    // 键位框必须在；默认键位必须是 Ctrl+Shift+Space，**不能**是 Ctrl+空格（那是输入法的中英切换）
+    const key0 = await execIn('voiceSettingsWin', `document.getElementById('keyLocal').textContent`);
+    results.push({ name: `语音设置：聊天窗内键位框(${key0})`, ok: key0 === 'Ctrl + Shift + Space' });
+    const keyG0 = await execIn('voiceSettingsWin', `document.getElementById('keyGlobal').textContent`);
+    results.push({ name: '语音设置：全局键默认"未设置"（不替用户占按键）', ok: /未设置/.test(keyG0) });
+
+    // 键位录制：点一下框 → 按一个键 → 记下来（用合成事件驱动，**不需要真按键**）
+    await execIn('voiceSettingsWin', `document.getElementById('keyGlobal').click()`);
+    const recTxt = await execIn('voiceSettingsWin', `document.getElementById('keyGlobal').textContent`);
+    results.push({ name: `语音设置：点击后进入录制态(${recTxt})`, ok: recTxt === '请按键…' });
+    // 只按修饰键应被拒绝（否则会录到"半个键"）
+    await execIn('voiceSettingsWin', `(() => { window.dispatchEvent(new KeyboardEvent('keydown', { code: 'ControlLeft', ctrlKey: true, bubbles: true, cancelable: true })); })()`);
+    const stillRec = await execIn('voiceSettingsWin', `document.getElementById('keyGlobal').textContent`);
+    results.push({ name: '语音设置：只按修饰键不记录（需再配一个主键）', ok: stillRec === '请按键…' });
+    await execIn('voiceSettingsWin', `(() => { window.dispatchEvent(new KeyboardEvent('keydown', { code: 'F8', bubbles: true, cancelable: true })); })()`);
+    const keyG = await execIn('voiceSettingsWin', `document.getElementById('keyGlobal').textContent`);
+    results.push({ name: `语音设置：全局键被记录为(${keyG})`, ok: keyG === 'F8' });
+
+    await execIn('voiceSettingsWin', `(() => { const w = document.getElementById('wakeWord'); w.value = '小助手'; w.dispatchEvent(new Event('input')); })()`);
+    await sleep(150);
+    const kwLine = await execIn('voiceSettingsWin', `document.getElementById('kwLine').textContent`);
+    results.push({ name: `语音设置：唤醒词音素串预览(${kwLine.slice(0, 46)}…)`, ok: kwLine.includes('@小助手') && !kwLine.includes('（空）') });
+
+    // 关掉后台唤醒 + 保留刚录的全局键 → 一起落盘
+    await execIn('voiceSettingsWin', `(() => { const c = document.getElementById('wakeEnabled'); c.checked = false; c.dispatchEvent(new Event('change')); })()`);
+    await execIn('voiceSettingsWin', `document.getElementById('saveBtn').click()`);
+    await sleep(400);
+    st = mainState();
+    results.push({
+      name: '语音设置：唤醒开关 + 唤醒词 + 全局键位落盘 settings.voice',
+      ok: !!(st.voice && st.voice.wake.enabled === false && st.voice.wake.word === '小助手'
+        && st.voice.wake.tokens === '' && st.voice.ptt && st.voice.ptt.globalKey === 'F8'
+        && !('mode' in st.voice)),
+    });
+    await execIn('voiceSettingsWin', `document.getElementById('revertBtn').click()`); // 还原默认
+    await sleep(400);
+    results.push({ name: '语音设置：可一键还原默认', ok: mainState().voice === null });
+
+    // ---------- 收尾：关窗 ----------
+    await execIn('pomodoroWin', `window.close()`);
+    await execIn('plannerWin', `window.close()`);
+    await execIn('voiceSettingsWin', `window.close()`);
+    await sleep(200);
 
     return assertMap(results);
   },

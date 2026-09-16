@@ -14,18 +14,18 @@
 const { ipcRenderer } = require('electron');
 const nodePath = require('path');
 const { CFG } = require('../shared/config');
-const { analyzeBitmap, hitTestPixel, scalePlan } = require('../shared/pixel');
-const { GestureTracker } = require('../shared/gesture');
-const { springParams, integrateSpring, impulse, breathe } = require('../shared/spring');
-const physics = require('../shared/physics');
-const { chooseSnapTarget, shouldDetach } = require('../shared/snap');
-const { planBlink, shouldPlayBlinkAnim } = require('../shared/blink');
-const { nextStateVisual } = require('../shared/stateVisual');
-const statusM = require('../shared/status');
 const { clamp } = require('../shared/util');
+const { analyzeBitmap, hitTestPixel, scalePlan } = require('../shared/geom');
+const {
+  GestureTracker, springParams, integrateSpring, impulse, breathe,
+  step: physicsStep, atRest: physicsAtRest, chooseSnapTarget, shouldDetach, normCol,
+} = require('../shared/motion');
+const { normalizeBlinkFrames, shouldPlayBlinkAnim, isBreathZeroCross } = require('../shared/blink');
+const statusM = require('../shared/status');
+const { nextStateVisual } = statusM;
 
 const $ = (id) => document.getElementById(id);
-const worldEl = $('world'), petWrap = $('petWrap'), petCanvas = $('pet');
+const worldEl = $('world'), petWrap = $('petWrap'), petEl = $('pet');
 const fxEl = $('fx'), ringWrap = $('ringWrap'), ringArc = $('ringArc');
 const pillEl = $('pill');
 const bubbleEl = $('bubble');
@@ -60,7 +60,7 @@ const app = {
   ignoreSent: null,
   buttonDown: false,
 
-  pet: null,           // {canvas,ctx,bitmap,w,h,anchor,pos}
+  pet: null,           // {src,w,h,bitmap,anchor,col,pos} —— 判定/物理只认这个“身体”，与显示解耦
   uiRects: [],         // 可交互 UI 矩形（状态胶囊、面板），参与 isInteractableAt 判定
   forceInteractive: false, // 弹层/菜单打开时强制整窗可交互（瞬态）
 
@@ -68,6 +68,9 @@ const app = {
   anim: {
     spr: { x: { s: 1, v: 0 }, y: { s: 1, v: 0 } }, // q 弹弹簧
     ringVisible: false,
+    breathT: 0,      // 呼吸波相位（ms）：只在待机时推进 → 拖动/飞行暂停（冻结时长 == 暂停时长）
+    ramp: 0,         // 呼吸幅度渐入 0..1：恢复待机后 0.5s 内从 0 爬回满幅（衔接连续不突跳）
+    breathSign: 0,   // 主呼吸波偏移符号（-1/0/1），符号翻转 = 呼吸零点（眨眼/特效起播门禁）
   },
 
   // ---- 手势 ----
@@ -108,14 +111,22 @@ const app = {
   // 应用内选择器（选背景/选音乐，绕开这台机器上失灵的原生文件对话框）
   petPickerOpen: false,
   bubbleTimer: null,
-  blink: { visible: false, timer: null, endTimer: null },
+  blink: { visible: false, endTimer: null, playing: false },
+  blinkBody: null, // 降级单图眨眼的“帧身体”（src/assets/blink.png 解码；null = 不可用）
   stateVisual: { visible: false },  // 当前形态：false=主形象，true=状态形象
   mainBody: null,      // 主形象"身体"：解码位图/锚点/尺寸（当前 app.pet 指向活动身体）
-  stateBody: null,     // 状态形象"身体"（预载 src/assets/state.png 或配置覆盖；null = 切换不可用）
-  // ---- 可定制值（来自 app:init 的 dev 块；无开发者模式时 = config.js 默认值） ----
-  greetings: null,                            // 启动问候语列表（覆盖后）
-  blinkAnim: { frames: [], probability: 1 },  // 多帧眨眼动画；frames 空 = 降级旧 blink.png
-  stateImagePath: null,                       // 状态图覆盖（dataUrl）；null = 内置 src/assets/state.png
+  stateBody: null,     // 状态形象"身体"（预载 src/assets/state.png 或 config 覆盖；null = 切换不可用）
+  // ---- 随机特效动画（config.js effectAnim.groups：动画1/动画2 等，整帧替换的随机小动画） ----
+  effectFx: {
+    groups: [],     // [{ name, frames: [帧身体+durationMs] }]；frames 空 = 功能关闭
+    timer: null,    // 15~25s 随机“再试”定时器
+    pending: false, // 已到点、挂起等下一个呼吸零点起播
+    playing: false,
+    rng: null,      // 组选择随机源（测试可注入）；null = Math.random
+  },
+  // ---- 可定制值（config.js 驱动，initCustomConfig 启动时载入） ----
+  blinkAnim: { frames: [], probability: 1 },  // 多帧眨眼动画（帧身体数组）；frames 空 = 降级旧 blink.png
+  stateImagePath: null,                       // 状态图覆盖路径（相对 data/ 或绝对）；null = 内置
   petPickerKind: 'bg',    // 'bg' | 'audio'（换宠已移除）
   petPickerDir: null,
   petPickerCur: null,     // 当前选中的源文件路径
@@ -180,8 +191,9 @@ function syncHitTest() {
 
 /* ================= 宠物加载 ================= */
 
-/** 把已加载的 Image 解码成一具"身体"：等比缩放 → 位图分析（透明判定 + 实体像素中心锚点）。
- *  主形象与状态形象都走这条管线，各自的 bitmap 是该形态像素级判定的唯一来源。 */
+/** 把已加载的 Image 解码成一具"身体"：等比缩放 → 位图分析（透明判定 + 实体像素中心锚点 +
+ *  像素级碰撞盒）。主形象/状态形象/眨眼帧/特效帧都走这条管线；body.bitmap 是该形态
+ *  像素级判定的唯一来源，body.src（原图）交给 <img> 由浏览器按显示尺寸高质量光栅化。 */
 function decodeImageObject(img, maxDim) {
   const { width, height } = scalePlan(img.naturalWidth, img.naturalHeight, maxDim);
   const canvas = document.createElement('canvas');
@@ -192,7 +204,14 @@ function decodeImageObject(img, maxDim) {
   const imageData = ctx.getImageData(0, 0, width, height);
   const analysis = analyzeBitmap(imageData, CFG.image.alphaThreshold);
   if (!analysis.hasPixels) throw new Error('图片看起来是全透明的（没有可交互像素）');
-  return { canvas, ctx, w: width, h: height, bitmap: imageData, anchor: analysis.anchor, pos: null };
+  const b = analysis.bbox;
+  return {
+    src: img.src, w: width, h: height, bitmap: imageData, anchor: analysis.anchor,
+    // 像素级碰撞盒：不透明像素包围盒（本地位移/尺寸）。物理落地/贴墙/吸附贴顶/背景贴地
+    // 全以它为准（透明边距不参与碰撞，落地不再“悬空”）。
+    col: { ox: b.x0, oy: b.y0, w: b.x1 - b.x0, h: b.y1 - b.y0 },
+    pos: null,
+  };
 }
 
 async function decodeImageDataUrl(dataUrl, maxDim) {
@@ -212,8 +231,11 @@ function defaultPetPos(w, h) {
 }
 
 function clampPetIntoWorld(p) {
-  p.pos.x = clamp(p.pos.x, 0, Math.max(0, app.worldW - p.w));
-  p.pos.y = clamp(p.pos.y, 0, Math.max(0, app.worldH - p.h));
+  // 与物理边界同一语义：按碰撞盒（不透明像素）夹取，透明边距允许悬出区域边缘。
+  // 若按整图夹取，会把“碰撞盒贴地落地”的宠物提离地面（透明边距高度），破坏贴地判定。
+  const col = normCol(p);
+  p.pos.x = clamp(p.pos.x, -col.ox, Math.max(-col.ox, app.worldW - col.w - col.ox));
+  p.pos.y = clamp(p.pos.y, -col.oy, Math.max(-col.oy, app.worldH - col.h - col.oy));
 }
 
 async function loadPet(dataUrl) {
@@ -231,8 +253,7 @@ async function loadPet(dataUrl) {
   app.pet = p;
   drawBody(p);
   clampPetIntoWorld(p);
-  blinkEl.src = '../assets/blink.png'; // 旧版单图眨眼（无多帧配置时降级用）
-  petCanvas.style.transform = '';
+  petEl.style.transform = '';
   hintEl.style.display = 'none';
   app.anim.spr = { x: { s: 1, v: 0 }, y: { s: 1, v: 0 } };
   // 载入主形象 = 回到主形态（换宠后吸附/抛掷状态复位）
@@ -244,15 +265,15 @@ async function loadPet(dataUrl) {
   return true;
 }
 
-/** 把"身体"画到显示画布上：画布尺寸 = 身体尺寸，缩放原点 = 该身体的锚点。 */
+/** 把"身体"显示到本体 <img> 上：显示尺寸 = 身体尺寸，缩放原点 = 该身体的锚点。
+ *  原图直通（body.src），浏览器按显示尺寸高质量光栅化 —— 与特效帧同一条管线，无发糊。 */
 function drawBody(body) {
-  petCanvas.width = body.w;
-  petCanvas.height = body.h;
-  const ctx = petCanvas.getContext('2d');
-  ctx.drawImage(body.canvas, 0, 0);
+  petEl.src = body.src;
+  petEl.style.width = body.w + 'px';
+  petEl.style.height = body.h + 'px';
   petWrap.style.width = body.w + 'px';
   petWrap.style.height = body.h + 'px';
-  petCanvas.style.transformOrigin = `${body.anchor.x}px ${body.anchor.y}px`;
+  petEl.style.transformOrigin = `${body.anchor.x}px ${body.anchor.y}px`;
 }
 
 /**
@@ -269,7 +290,6 @@ async function loadStateBody() {
         })()
       : await decodeImageSrc('../assets/state.png', CFG.image.petMaxDim);
     app.stateBody = body;
-    if (app.stateVisual.visible) setStateVisible(true); // 运行中重载（dev:update）：按当前形态换上新身体
   } catch (e) {
     app.stateBody = null;
     if (app.stateVisual.visible && app.mainBody) { // 正显示状态形象但新身体不可用 → 退回主形态
@@ -295,7 +315,7 @@ function emit(kind, data) { for (const fn of app.bus) { try { fn(kind, data); } 
 /* ================= 动画（呼吸 / q 弹 / 爱心） ================= */
 
 function setScale(sx, sy) {
-  const c = petCanvas.style;
+  const c = petEl.style;
   c.transform = sx === 1 && sy === 1 ? '' : `scale(${sx.toFixed(4)}, ${sy.toFixed(4)})`;
 }
 
@@ -320,13 +340,31 @@ function spawnHeart(cx, cy, level = 1) {
   h.addEventListener('animationend', () => h.remove());
 }
 
+/**
+ * 聊天气泡定位（所有气泡共用：问候/提醒/催促/聊天回复）。
+ *
+ * ★ 必须**给宠物头顶的语音提示条让位**（用户 2026-09-16 反馈）。
+ *   原因：语音提示条（含绿色电平条）锚在 `宠物y - 26`、高约 24px → 占 `y-26 .. y-2`；
+ *   气泡原本锚在 `y - 气泡高 - 8`，一行气泡高约 36px → 占 `y-44 .. y-8`。
+ *   两者**重叠 18px**，而气泡 z-index(9) 又高于提示条(8) → 互相盖住、看起来反复闪动。
+ *   现在把提示条占的高度算进偏移：提示条在时气泡整体上移，提示条收起后再落回来。
+ * @returns {boolean} 是否真的排了（气泡没显示时返回 false）
+ */
+function layoutBubble() {
+  if (!bubbleEl || !app.pet) return false;
+  if (!bubbleEl.classList.contains('show')) return false;
+  const p = app.pet;
+  const reserve = voiceReserveHeight();
+  bubbleEl.style.left = `${clamp(p.pos.x + p.anchor.x - bubbleEl.offsetWidth / 2, 6, Math.max(6, app.worldW - bubbleEl.offsetWidth - 6))}px`;
+  bubbleEl.style.top = `${clamp(p.pos.y - reserve - bubbleEl.offsetHeight - 8, 6, Math.max(6, app.worldH - bubbleEl.offsetHeight - 6))}px`;
+  return true;
+}
+
 function showBubble(text, durationMs) {
   if (!bubbleEl || !app.pet) return;
   bubbleEl.textContent = String(text || '');
   bubbleEl.classList.add('show');
-  const p = app.pet;
-  bubbleEl.style.left = `${clamp(p.pos.x + p.anchor.x - bubbleEl.offsetWidth / 2, 6, Math.max(6, app.worldW - bubbleEl.offsetWidth - 6))}px`;
-  bubbleEl.style.top = `${clamp(p.pos.y - bubbleEl.offsetHeight - 8, 6, Math.max(6, app.worldH - bubbleEl.offsetHeight - 6))}px`;
+  layoutBubble();
   updateUiRects(); // 气泡参与命中判定：指针在其上窗口可交互（可点击关闭）
   if (app.bubbleTimer) clearTimeout(app.bubbleTimer);
   app.bubbleTimer = setTimeout(hideBubble, Math.max(0, durationMs ?? CFG.greeting.durationMs));
@@ -340,11 +378,142 @@ function hideBubble() {
   updateUiRects();
 }
 
+/* ================= 语音状态指示（红线：纯视觉，不进 uiRects） ================= */
+
+const voiceEl = $('voice');
+const voiceTxtEl = voiceEl ? voiceEl.querySelector('.vt') : null;
+const voiceBarEl = voiceEl ? voiceEl.querySelector('.bar > i') : null;
+// 语音侧状态（主进程 voice:state / voice:partial 推来；呈现规则：只在 decoding 时显示）
+const voiceState = { state: 'idle', rms: 0, partial: '' };
+
+function setVoiceState(patch) {
+  Object.assign(voiceState, patch || {});
+  layoutVoiceIndicator();
+}
+
+/**
+ * "在听/在识别"小指示：跟着宠物头顶走。
+ * ★ 呈现规则（用户定调，2026-09-15）：**被动等待唤醒时不显示任何东西** ——
+ *   后台监听是安静的，桌面不该常驻一个"说 XX 叫我"的小窗；
+ *   只有真正进入对话（被唤醒词唤醒 / 按键说话，即 state='decoding'）才出现。
+ * 注意它是 **pointer-events:none** 的纯视觉元素，且**故意不进 updateUiRects()** ——
+ * 它不是可点目标，不能给像素穿透判定添新矩形（红线）。
+ */
+function layoutVoiceIndicator() {
+  if (!voiceEl) return;
+  const on = voiceState.state === 'decoding';
+  const wasOn = voiceEl.classList.contains('on');
+  voiceEl.classList.toggle('on', on);
+  // ★ 显示/隐藏切换时要把气泡重新排一次：语音条占的那点高度要"还回去"（否则气泡悬空或跳位）
+  if (on !== wasOn) {
+    if (layoutBubble()) updateUiRects(); // 气泡参与命中判定，位置变了就得同步矩形
+  }
+  if (!on) return;
+  const label = voiceState.partial ? `听到：${voiceState.partial}` : '在听…';
+  if (voiceTxtEl) voiceTxtEl.textContent = label;
+  if (voiceBarEl) voiceBarEl.style.width = `${Math.min(100, Math.round(voiceState.rms * 500))}%`;
+  const p = app.pet;
+  const w = voiceEl.offsetWidth || 120;
+  voiceEl.style.left = `${clamp(p.pos.x + p.anchor.x - w / 2, 6, Math.max(6, app.worldW - w - 6))}px`;
+  voiceEl.style.top = `${clamp(p.pos.y - 26, 6, Math.max(6, app.worldH - 26))}px`;
+}
+
+/**
+ * 语音提示条当前占掉的高度（不可见 → 0）。
+ * 气泡定位要把它算进去 —— 见 layoutBubble() 的注释（两个元素重叠是用户实际看到的 bug）。
+ */
+function voiceReserveHeight() {
+  if (!voiceEl || !voiceEl.classList.contains('on')) return 0;
+  return (voiceEl.offsetHeight || 24) + 6;
+}
+
+/** 语音"在听"期间压低 BGM（否则麦克风会把自己的音乐收进去污染识别）。 */
+function duckAudio(on) {
+  const el = app.audio.el;
+  if (!el) return;
+  el.volume = on ? Math.min(app.audio.volume, CFG.audio.duckVolume) : app.audio.volume;
+}
+
 function setBlinkVisible(v) {
-  // 眨眼图属于“主宠物形象”：状态图形态下不显示眨眼
+  // 眨眼/特效帧属于“主宠物形象”：状态图形态下不显示
   if (v && app.stateVisual.visible) v = false;
   app.blink.visible = !!v;
   if (blinkEl) blinkEl.style.display = app.blink.visible ? 'block' : 'none';
+}
+
+/* ================= 叠加帧（眨眼 / 随机特效动画：整帧“接管”本体显示） =================
+ * 帧素材是“包含完整宠物的整图” → 从第一帧起隐藏本体、播完恢复（防双影）。
+ * 红线不受影响：判定/物理始终用 app.pet 的真实身体位图，叠加只是显示层。
+ * 叠加层每帧跟随实时呼吸缩放（不冻结为 1）：零点时刻 y 轴仍带相位滞后拉伸，
+ * 跟随则两次图层切换尺度完全连续（否则可见“缩回-弹回”抖动）。 */
+
+/** 显示一帧：帧与本体按“碰撞盒底边中点”对齐（脚底原地不动），缩放原点 = 帧自己的锚点。
+ *  注入的测试帧（只有 src/durationMs）回退为铺满本体 + 中心锚点（兼容旧拉伸显示）。 */
+function showFrameBody(fb) {
+  const p = app.pet;
+  if (!p) return;
+  const fw = fb.w || p.w, fh = fb.h || p.h;
+  const fcol = fb.col || { ox: 0, oy: 0, w: fw, h: fh };
+  const fa = fb.anchor || { x: fw / 2, y: fh / 2 };
+  const bx = p.col.ox + p.col.w / 2, by = p.col.oy + p.col.h;
+  const fx = fcol.ox + fcol.w / 2, fy = fcol.oy + fcol.h;
+  blinkEl.style.left = `${bx - fx}px`;
+  blinkEl.style.top = `${by - fy}px`;
+  blinkEl.style.width = `${fw}px`;
+  blinkEl.style.height = `${fh}px`;
+  blinkEl.style.transformOrigin = `${fa.x}px ${fa.y}px`;
+  blinkEl.src = fb.src;
+}
+
+function overlayBusy() { return app.blink.playing || app.effectFx.playing; }
+
+/** 播放期间暂停透明度变化（休息闪烁/归零半透明都走这里）；播完由 finish 恢复。 */
+function applyPetOpacity() {
+  if (!app.pet || overlayBusy()) return;
+  petWrap.style.opacity = petOpacityNow();
+}
+
+/** 立即停止叠加帧播放/挂起，恢复本体显示（拖动/切形态/隐藏/抛掷时调用）。
+ *  被中断的是特效 → 重新排下一次“再试”（否则调度器断链，特效从此不再触发）。 */
+function abortOverlayPlayback() {
+  if (app.blink.endTimer) { clearTimeout(app.blink.endTimer); app.blink.endTimer = null; }
+  if (app.effectFx.timer) { clearTimeout(app.effectFx.timer); app.effectFx.timer = null; }
+  const wasPlaying = overlayBusy();
+  const wasFx = app.effectFx.playing;
+  app.blink.playing = false;
+  app.effectFx.playing = false;
+  app.effectFx.pending = false;
+  setBlinkVisible(false);
+  if (app.pet) petEl.style.display = '';
+  if (wasPlaying) applyPetOpacity();
+  if (wasFx) scheduleEffectTry();
+}
+
+/** 依次播放叠加帧（每帧显示各自 durationMs，播完恢复本体）。
+ *  每帧开始前重新检查：宠物在/主形态/未隐藏/未拖动 —— 异常即终止。 */
+function playOverlayFrames(frames, done) {
+  let i = 0;
+  const step = () => {
+    app.blink.endTimer = null;
+    if (!app.pet || app.stateVisual.visible || app.paused || app.dragging || i >= frames.length) {
+      finishOverlayPlayback();
+      if (done) done();
+      return;
+    }
+    showFrameBody(frames[i]);
+    petEl.style.display = 'none'; // 帧是完整整图：从第一帧起隐藏本体（防双影）
+    setBlinkVisible(true);
+    app.blink.endTimer = setTimeout(step, frames[i].durationMs);
+    i += 1;
+  };
+  step();
+}
+
+function finishOverlayPlayback() {
+  if (app.blink.endTimer) { clearTimeout(app.blink.endTimer); app.blink.endTimer = null; }
+  setBlinkVisible(false);
+  if (app.pet) petEl.style.display = '';
+  applyPetOpacity(); // 播放中暂停的透明度变化，播完恢复
 }
 
 /**
@@ -357,6 +526,7 @@ function setStateVisible(v) {
   const want = !!v;
   if (want && (!app.stateBody || !app.mainBody)) { ipcRenderer.send('state:visualSync', { useState: false }); return; }
   if (app.stateVisual.visible === want) { ipcRenderer.send('state:visualSync', { useState: app.stateVisual.visible }); return; }
+  abortOverlayPlayback(); // 叠加帧属于主形象：切形态前停掉眨眼/特效并恢复本体
   const old = app.pet;
   const next = want ? app.stateBody : app.mainBody;
   if (old && next && old.pos) {
@@ -369,7 +539,7 @@ function setStateVisible(v) {
   app.stateVisual.visible = want;
   drawBody(next);
   clampPetIntoWorld(next);
-  petCanvas.style.transform = ''; // 清掉旧身体的缩放形变（弹簧下一帧按新身体重算）
+  petEl.style.transform = ''; // 清掉旧身体的缩放形变（弹簧下一帧按新身体重算）
   if (want) setBlinkVisible(false); // 闭眼图属于主形象：状态形态不眨眼
   syncPlacement();
   // 回报主进程当前形态（菜单单选项勾选态依据）
@@ -381,50 +551,68 @@ function toggleStateVisual() {
   return app.stateVisual.visible;
 }
 
-function scheduleBlink() {
-  if (!app.pet) return;
-  const plan = planBlink();
-  app.blink.timer = setTimeout(() => {
-    // 状态图形态下不眨眼（闭眼图属于主宠物形象），只推进下一次计划
-    if (app.stateVisual.visible) { scheduleBlink(); return; }
-    // 多帧动画模式：按整体触发概率掷骰，命中则依次播放帧序列；未命中保持常态。
-    if (app.blinkAnim.frames.length) {
-      if (shouldPlayBlinkAnim(app.blinkAnim.probability)) playBlinkAnimSequence();
-      else scheduleBlink();
-      return;
-    }
-    // 降级：原有单图眨眼（blink.png），时长走随机区间
-    setBlinkVisible(true);
-    app.blink.endTimer = setTimeout(() => {
-      setBlinkVisible(false);
-      app.blink.endTimer = null;
-      scheduleBlink();
-    }, plan.durationMs);
-  }, plan.intervalMs);
+/* ================= 眨眼（呼吸零点触发）与随机特效动画 =================
+ * 两者共用“呼吸零点”这个起播门禁（本体恰在未变形尺寸，图层切换无跳变），
+ * 并以状态标志做严格互斥（特效优先）：任何一方挂起/播放中，另一方不起播。 */
+
+function canStartOverlay() {
+  return !!app.pet && !app.stateVisual.visible && !app.paused && !overlayBusy();
 }
 
-/**
- * 依次播放眨眼动画帧（每帧显示各自的 durationMs，播完恢复常态）。
- * 每帧开始前重新检查：宠物还在/不在状态图形态/帧列表仍存在 —— 异常即终止并恢复计划。
- * 动画只动叠加图层（#blink），不影响任何交互判定。
- */
-function playBlinkAnimSequence() {
-  let i = 0;
-  const step = () => {
-    const frames = app.blinkAnim.frames;
-    if (!app.pet || app.stateVisual.visible || i >= frames.length) {
-      setBlinkVisible(false);
-      app.blink.endTimer = null;
-      scheduleBlink();
-      return;
-    }
-    blinkEl.src = frames[i].src;
-    setBlinkVisible(true);
-    const dur = frames[i].durationMs;
-    i += 1;
-    app.blink.endTimer = setTimeout(step, dur);
-  };
-  step();
+/** 呼吸零点（tickAnimations 检测到主波符号翻转时调用）。 */
+function onBreathZero() {
+  // 特效优先：已挂起 → 本零点归特效
+  if (app.effectFx.pending) {
+    if (!canStartOverlay()) return; // 条件不满足 → 继续挂起等下一个零点
+    app.effectFx.pending = false;
+    startEffectPlayback();
+    return;
+  }
+  /* ============【暂时注释】眨眼功能暂时关闭（2026-09-10）============
+   * 只是暂时注释掉“自动眨眼的触发”，恢复眨眼时把下面整块取消注释即可。
+   * 播放机制（playOverlayFrames / blinkBody / 多帧 blinkAnim）、测试钩子
+   * （playBlinkAnim / forceBlink）与 UI 场景全部原样保留，取消注释即完全恢复。
+  if (!canStartOverlay()) return;
+  const multi = app.blinkAnim.frames.length > 0;
+  const chance = multi ? app.blinkAnim.probability : CFG.blink.zeroChance;
+  if (!shouldPlayBlinkAnim(chance)) return;
+  const frames = multi ? app.blinkAnim.frames : (app.blinkBody ? [app.blinkBody] : []);
+  if (!frames.length) return;
+  app.blink.playing = true;
+  playOverlayFrames(frames, () => { app.blink.playing = false; });
+   * ============【暂时注释结束】============ */
+}
+
+/** 随机特效动画：每次播完/跳过后在 min~max 间隔随机“再试”。 */
+function scheduleEffectTry() {
+  if (app.effectFx.timer) clearTimeout(app.effectFx.timer);
+  app.effectFx.timer = null;
+  if (!app.effectFx.groups.length) return;
+  const min = CFG.effectAnim.minIntervalMs, max = CFG.effectAnim.maxIntervalMs;
+  const delay = Math.max(0, min) + Math.random() * Math.max(0, max - min);
+  app.effectFx.timer = setTimeout(() => { app.effectFx.timer = null; effectTry(); }, delay);
+}
+
+/** 到点“再试”：占用中（拖动/物理/手势/状态形态/隐藏/其它叠加播放）→ 跳过本轮；
+ *  空闲 → 挂起，等下一个呼吸零点起播（起播门禁，见 playOverlayFrames 注释）。 */
+function effectTry() {
+  if (!app.effectFx.groups.length) return;
+  const busy = !app.pet || app.dragging || app.phys || app.gtr.isInteracting ||
+    app.stateVisual.visible || app.paused || overlayBusy() || app.effectFx.pending;
+  if (busy) { scheduleEffectTry(); return; }
+  app.effectFx.pending = true;
+}
+
+function startEffectPlayback() {
+  const groups = app.effectFx.groups;
+  if (!groups.length || !app.pet) return;
+  const rng = app.effectFx.rng || Math.random;
+  const group = groups[Math.min(groups.length - 1, Math.floor(rng() * groups.length))];
+  app.effectFx.playing = true;
+  playOverlayFrames(group.frames, () => {
+    app.effectFx.playing = false;
+    scheduleEffectTry(); // 播完 → 排下一次随机再试
+  });
 }
 
 function updateRing(dt) {
@@ -451,23 +639,54 @@ function tickAnimations(dt, ms) {
   const P = springParams();
   A.spr.x = integrateSpring(A.spr.x, dt, P);
   A.spr.y = integrateSpring(A.spr.y, dt, P);
-  // 拖动/飞行中不做待机呼吸
+  // 拖动/飞行中呼吸暂停（相位冻结：暂停多久冻结多久）；恢复时幅度 0.5s 内从 0 渐回满幅，
+  // 恢复瞬间与冻结状态完全连续（手册 #6：暂停后恢复不能从 0 跳回波形中段）。
   const idle = !app.phys && !app.dragging;
-  const br = idle ? breathe(ms) : { x: 1, y: 1 };
+  if (idle) {
+    A.breathT += dt * 1000;
+    A.ramp = Math.min(1, A.ramp + dt / 0.5);
+  } else {
+    A.ramp = 0;
+  }
+  const br = idle
+    ? breathe(A.breathT, { amplitude: CFG.anim.breatheAmplitude * A.ramp })
+    : { x: 1, y: 1 };
   const sx = A.spr.x.s * br.x;
   const sy = A.spr.y.s * br.y;
   setScale(sx, sy);
+  applyOverlayScale(sx, sy); // 叠加帧（眨眼/特效）跟随实时呼吸缩放，图层切换尺度连续
   A.drawnScale = { x: sx, y: sy };
+  // 呼吸零点（主波 x 偏移符号翻转）→ 眨眼/特效的起播机会；非待机期间不产生零点
+  if (idle && A.ramp > 0) {
+    const off = br.x - 1;
+    if (isBreathZeroCross(A.breathSign, off)) onBreathZero();
+    A.breathSign = off;
+  } else {
+    A.breathSign = 0;
+  }
   updateRing(dt);
+}
+
+/** 叠加帧层跟随实时呼吸缩放（本体隐藏期间由它保持“宠物在呼吸”的连续性）。 */
+function applyOverlayScale(sx, sy) {
+  if (!app.blink.visible) return;
+  blinkEl.style.transform = sx === 1 && sy === 1 ? '' : `scale(${sx.toFixed(4)}, ${sy.toFixed(4)})`;
 }
 
 /* ================= 物理（抛掷/坠落；吸附 Phase 3 接入） ================= */
 
+/** 碰撞盒底边相对 pos 的偏移（不透明像素的下缘）：落地/贴地判定全以它为准。 */
+function colBottomOff(p) { return p.col.oy + p.col.h; }
+
 function physState() {
-  return { x: app.pet.pos.x, y: app.pet.pos.y, vx: 0, vy: 0, grounded: false, w: app.pet.w, h: app.pet.h };
+  return {
+    x: app.pet.pos.x, y: app.pet.pos.y, vx: 0, vy: 0, grounded: false,
+    w: app.pet.w, h: app.pet.h, col: { ...app.pet.col },
+  };
 }
 
 function startPhys(vel) {
+  abortOverlayPlayback(); // 抛掷/坠落接管身体：停掉眨眼/特效叠加帧
   const s = physState();
   s.vx = vel.vx; s.vy = vel.vy;
   app.phys = { s, prev: { grounded: false }, bounceCount: 0 };
@@ -478,7 +697,7 @@ function stopPhys() { app.phys = null; }
 function tickPhysics(dt) {
   if (!app.pet || !app.phys) return;
   const w = { w: app.worldW, h: app.worldH };
-  const res = physics.step(app.phys.s, dt, w);
+  const res = physicsStep(app.phys.s, dt, w);
   app.pet.pos.x = res.s.x;
   app.pet.pos.y = res.s.y;
   app.phys.s = res.s;
@@ -490,8 +709,8 @@ function tickPhysics(dt) {
   }
   if (res.hitWall || res.hitCeiling) pulse(1.2);
   app.phys.prevVy = res.s.vy;
-  // 已静止 & 在地面 -> 结束物理，回待机
-  if (physics.atRest(res.s) && res.s.y >= app.worldH - app.pet.h - 0.5) stopPhys();
+  // 已静止 & 实体像素贴地（碰撞盒底边触地）-> 结束物理，回待机
+  if (physicsAtRest(res.s) && res.s.y >= app.worldH - colBottomOff(app.pet) - 0.5) stopPhys();
 }
 
 /** 释放后的路由：甩动 -> 抛掷；低速 -> 尝试吸附到窗口顶沿，否则从当前位置坠落。 */
@@ -499,8 +718,8 @@ function routeRelease(rel) {
   emit('drag'); // 拖动结束仍计一次主动互动（保留原行为）
   if (app.locked || !app.pet) return;
   const thrown = rel.speed >= CFG.physics.throwSpeedThreshold;
-  // 宠物本就在地面休息 -> 不重新启动物理（避免原地小跳）
-  const onFloor = app.pet.pos.y >= app.worldH - app.pet.h - 1;
+  // 宠物本就在地面休息（碰撞盒贴地）-> 不重新启动物理（避免原地小跳）
+  const onFloor = app.pet.pos.y >= app.worldH - colBottomOff(app.pet) - 1;
   if (onFloor && !thrown) return;
 
   if (!app.physicsEnabled) {
@@ -553,9 +772,9 @@ async function attemptSnap() {
 function applySnap(target) {
   const p = app.pet;
   app.phys = null;
-  // 底边贴窗口顶：contentY = (screenTop - originY) - petH，夹回区域顶。
+  // 碰撞盒底边贴窗口顶：contentY = (screenTop - originY) - 碰撞盒底边偏移，夹回区域顶。
   const contentTop = Math.max(0, target.top - app.worldOrigin.y);
-  p.pos.y = contentTop - p.h;
+  p.pos.y = contentTop - colBottomOff(p);
   p.pos.x = clamp(p.pos.x, 0, Math.max(0, app.worldW - p.w));
   app.snap = {
     handle: target.id, left: target.left, top: target.top,
@@ -625,6 +844,7 @@ function onMouseMove(e) {
   if (app.gtr.snapshot().dragging) {
     if (!app.dragging) {
       app.dragging = true;
+      abortOverlayPlayback(); // 拖动接管：停掉眨眼/特效叠加帧，放弃挂起的特效本轮
       app.phys = null; grabFromSnap(); // 抓取瞬间终止飞行并解除吸附（拎在手里）
     }
     followDrag(c);
@@ -714,47 +934,31 @@ function applyRegion(regionScreen) {
   refreshRegionDims();
 }
 
-/**
- * 应用"可定制值"热更新（开发者模式保存后由主进程推送 dev:update；无开发者模式时无发送方）。
- * 覆盖字段结构同 app:init 的 dev 块；pet 路径变化需重启（loadPet 在启动时解析）。
- */
-async function applyDevUpdate(patch) {
-  if (!patch || typeof patch !== 'object') return;
-  try {
-    if (Array.isArray(patch.greetings) && patch.greetings.length) app.greetings = patch.greetings;
-    if (patch.blinkAnim && typeof patch.blinkAnim === 'object') {
-      const frames = [];
-      for (const f of patch.blinkAnim.frames || []) {
-        if (!f || !f.path) continue;
-        const img = await ipcRenderer.invoke('asset:readImage', f.path);
-        if (img) frames.push({ src: img.dataUrl, durationMs: clamp(Number(f.durationMs) || 150, 30, 5000) });
-      }
-      app.blinkAnim.frames = frames;
-      const prob = Number(patch.blinkAnim.probability);
-      app.blinkAnim.probability = Number.isFinite(prob) ? clamp(prob, 0, 1) : 1;
-      setBlinkVisible(false); // 播放中改配置：终止当前帧序列（step 下一拍会发现列表已换/为空）
-    }
-    if ('stateImagePath' in patch) {
-      app.stateImagePath = patch.stateImagePath || null;
-      void loadStateBody(); // 重新解码状态身体（dev:update 当前无发送方，保留兼容）
-    }
-  } catch (e) { console.error('[dev] 应用可定制值失败', e && e.message ? e.message : e); }
-}
-
 function bindIpc() {
-  ipcRenderer.on('cursor:pos', (e, p) => { app.cursor = p; app.cursorKnown = true; });
+  ipcRenderer.on('cursor:pos', (e, p) => {
+    app.cursor = p; app.cursorKnown = true;
+    // 命中判定与 rAF 解耦兜底：光标是主进程 IPC 推送（不受页面节流/遮挡停转影响），
+    // 收到即驱动一次穿透判定（手册 #12：悬停响应不能只挂在会被系统节流的循环上）。
+    syncHitTest();
+  });
   ipcRenderer.on('lock:change', (_e, { locked }) => { app.locked = locked; app.ignoreSent = null; syncHitTest(); });
   ipcRenderer.on('app:visibility', (_e, { visible }) => onVisibility(visible));
   ipcRenderer.on('region:changed', (_e, { regionScreen }) => applyRegion(regionScreen));
   ipcRenderer.on('ui:openRegionEditor', () => openRegionEditor());
   ipcRenderer.on('ui:openPicker', (_e, { kind }) => openPetPicker(kind));
-  // 可定制值热更新（开发者模式保存后推送；平时无发送方）
-  ipcRenderer.on('dev:update', (_e, patch) => { void applyDevUpdate(patch); });
   ipcRenderer.on('state:visual', (_e, { useState }) => setStateVisible(!!useState));
   // ---- 气泡类：启动问候之外的待办提醒 / 随机催促 / 聊天回复 ----
   ipcRenderer.on('bubble:todo', (_e, { text, ms }) => showBubble(text, ms));
   ipcRenderer.on('bubble:reminder', (_e, { text, ms }) => showBubble(text, ms));
   ipcRenderer.on('bubble:chat', (_e, { text, ms }) => showBubble(text, ms));
+  // 番茄钟完成一个专注 → 桌宠回体力/情绪（数值夹取与持久化走同一套）
+  ipcRenderer.on('pet:reward', (_e, patch) => rewardPet(patch));
+  // ---- 语音（识别在独立隐藏进程；这里只做视觉反馈与 BGM 闪避）----
+  ipcRenderer.on('voice:state', (_e, p) => {
+    setVoiceState({ state: (p && p.state) || 'idle', rms: (p && p.rms) || 0, partial: '' });
+  });
+  ipcRenderer.on('voice:partial', (_e, p) => setVoiceState({ partial: (p && p.text) || '' }));
+  ipcRenderer.on('audio:duck', (_e, p) => duckAudio(!!(p && p.on)));
   // 原生右键菜单关闭后：清掉可能残留的按键/手势态（修复“菜单选完人物被吸到鼠标”）
   ipcRenderer.on('menu:closed', () => cleanupMenuGesture());
   // 吸附开关同步（托盘）
@@ -772,7 +976,6 @@ function bindIpc() {
     else if (a.type === 'resetStatus') resetStatus();
     else if (a.type === 'rest') startRest();
   });
-  ipcRenderer.on('bg:set', (_e, { path }) => setBgPath(path));
   ipcRenderer.on('bg:opacity', (_e, { opacity }) => setBgOpacity(opacity));
   ipcRenderer.on('bg:clear', () => setBgPath(null)); // “清除背景”真正把当前显示的背景清掉
   ipcRenderer.on('audio:list', (_e, { playlist }) => setPlaylist(playlist));
@@ -780,7 +983,6 @@ function bindIpc() {
   ipcRenderer.on('audio:next', () => audioNext());
   ipcRenderer.on('audio:prev', () => audioPrev());
   ipcRenderer.on('audio:stop', () => audioStop());
-  ipcRenderer.on('audio:vol', (_e, { volume }) => setVolume(volume));
 }
 
 function onVisibility(visible) {
@@ -788,14 +990,15 @@ function onVisibility(visible) {
   app.paused = !visible;
   if (visible) {
     startStatusTimers();
-    if (app.status) { // 隐藏期间的离线结算
-      app.status = statusM.settleStatus(app.status, Date.now());
+    if (app.status) { // 隐藏期间：默认**冻结**（不挨饿），见 config.status.decayWhileAway
+      app.status = resumeAfterAway(app.status, Date.now());
       applyStatusVisual();
       refreshPill();
       persistStatus(true);
     }
   } else {
     stopStatusTimers();
+    abortOverlayPlayback(); // 隐藏：停掉叠加帧与挂起的特效（恢复显示后由调度器重新再试）
     if (app.audio.playing && app.audio.el) app.audio.el.pause();
     requestIgnore(true);
   }
@@ -812,7 +1015,8 @@ bubbleEl.addEventListener('click', hideBubble);
 
 /* ================= Phase 4：状态 / 背景 / BGM / 区域 ================= */
 
-// ---------- 状态系统（每秒结算 + 离线结算 + 归零半透明 + 好感度） ----------
+// ---------- 状态系统（每秒结算 + 归零半透明 + 好感度） ----------
+// "不在你面前"的时段默认**冻结**（不结算），见 config.status.decayWhileAway 与 status.js freezeStatus()。
 
 function normStatusSnap(raw, now) {
   if (!raw || typeof raw !== 'object') return statusM.createDefaultStatus(now);
@@ -838,8 +1042,8 @@ function petOpacityNow() {
 
 function applyStatusVisual() {
   if (!app.pet || !app.status) return;
-  // 透明度作用于整个宠物容器：主图/状态图两种形态统一生效
-  petWrap.style.opacity = petOpacityNow();
+  // 透明度作用于整个宠物容器：主图/状态图两种形态统一生效（叠加帧播放期间暂停变化）
+  applyPetOpacity();
   const v = statusM.deriveStatus(app.status);
   pillEl.classList.toggle('low', v.low);
 }
@@ -865,7 +1069,7 @@ function beginRest(durMs, periodMs, minOp, maxOp) {
     max: maxOp,
     opacity: minOp, // 一进入休息从最淡开始渐变
   };
-  if (app.pet) petWrap.style.opacity = String(minOp);
+  if (app.pet && !overlayBusy()) petWrap.style.opacity = String(minOp);
 }
 
 /** 菜单“休息”→ 用默认时长/周期/上下限开始休息。已在休息中则忽略（不叠加）。 */
@@ -881,7 +1085,7 @@ function tickRest() {
   const elapsed = Date.now() - r.start;
   if (elapsed >= r.dur) { finishRest(); return; }
   r.opacity = restWave(r, elapsed);
-  if (app.pet) petWrap.style.opacity = String(r.opacity);
+  applyPetOpacity(); // 叠加帧播放中内部会跳过写入（透明度变化暂停，播完恢复）
 }
 
 /** 休息结束：停止闪烁；体力回满；透明度恢复正常（状态驱动的值）。 */
@@ -940,6 +1144,22 @@ function onStatusInteract(kind) {
   persistStatus(true);
 }
 
+/**
+ * 番茄钟等"外部奖励"入口：给情绪/体力加一个增量（夹 0-100），走与互动同一套
+ * 视觉刷新 + 持久化。负值也可（将来做"熬夜扣体力"）。
+ */
+function rewardPet(patch) {
+  if (!app.status || !patch) return;
+  const next = { ...app.status };
+  if (Number.isFinite(patch.energy)) next.energy = clamp(next.energy + patch.energy, 0, 100);
+  if (Number.isFinite(patch.mood)) next.mood = clamp(next.mood + patch.mood, 0, 100);
+  next.lastTs = Date.now();
+  app.status = next;
+  applyStatusVisual();
+  refreshPill();
+  persistStatus(true);
+}
+
 function statusTick() {
   if (app.paused || !app.status) return;
   app.status = statusM.settleStatus(app.status, Date.now());
@@ -990,10 +1210,10 @@ function layoutBg() {
   // 超出活动区域时等比缩回（极宽/极高图不至于撑爆窗口）
   if (bgW > app.worldW) { bgW = app.worldW; bgH = Math.max(1, Math.round(bgW * app.bgNat.h / app.bgNat.w)); }
   if (bgH > app.worldH) { bgH = app.worldH; bgW = Math.max(1, Math.round(bgH * app.bgNat.w / app.bgNat.h)); }
-  // 只有人物“站在地面”才更新背景的水平中心；空中保持上一次（人物落地后重新对齐）
-  const grounded = p && p.pos.y >= app.worldH - p.h - 1.5;
-  if (p && grounded) app.bgCX = p.pos.x + p.w / 2;
-  else if (app.bgCX == null) app.bgCX = p ? p.pos.x + p.w / 2 : app.worldW / 2;
+  // 只有人物“站在地面”（碰撞盒贴地）才更新背景的水平中心；空中保持上一次（人物落地后重新对齐）
+  const grounded = p && p.pos.y >= app.worldH - colBottomOff(p) - 1.5;
+  if (p && grounded) app.bgCX = p.pos.x + p.col.ox + p.col.w / 2;
+  else if (app.bgCX == null) app.bgCX = p ? p.pos.x + p.col.ox + p.col.w / 2 : app.worldW / 2;
   const left = Math.round(app.bgCX - bgW / 2);
   const top = Math.max(0, app.worldH - bgH); // 底边贴地面
   bgEl.style.width = bgW + 'px';
@@ -1092,11 +1312,6 @@ function setPlaylist(list) {
   app.audio.playlist = (list || []).filter((t) => t && t.path);
   if (!app.audio.playlist.length) { app.audio.index = -1; audioStop(); }
   else if (app.audio.index >= app.audio.playlist.length || app.audio.index < 0) app.audio.index = 0;
-}
-function setVolume(v) {
-  app.audio.volume = clamp(v, 0, 1);
-  if (app.audio.el) app.audio.el.volume = app.audio.volume;
-  ipcRenderer.send('settings:save', { volume: app.audio.volume });
 }
 
 // ---------- 活动区域编辑面板 ----------
@@ -1396,7 +1611,7 @@ function phase4Init(settings, workArea) {
     );
   }
   if (app.bgPath) void applyBg(app.bgPath);
-  app.audio.volume = clamp(typeof s.volume === 'number' ? s.volume : CFG.audio.volumeDefault, 0, 1);
+  // 音量固定用 config 默认（CFG.audio.volumeDefault），无音量 UI/持久化。
   app.audio.playlist = (s.playlist || []).filter((t) => t && t.path);
   app.audio.index = app.audio.playlist.length ? 0 : -1;
   initStatus(s.status);
@@ -1406,11 +1621,21 @@ function phase4Init(settings, workArea) {
 
 function initStatus(saved) {
   const now = Date.now();
-  app.status = statusM.settleStatus(normStatusSnap(saved, now), now); // 启动即离线结算
+  // 启动时同样**不结算离线时长**（默认冻结）：关掉电脑过一夜，第二天打开不该看到一只
+  // 情绪/饱食被算到 0 的宠物（用户 2026-09-16 反馈"别让桌宠在后台挨饿"）。
+  // 想恢复旧行为（离线也流逝）把 config.status.decayWhileAway 设为 true。
+  app.status = resumeAfterAway(normStatusSnap(saved, now), now);
   app._lastStatusPersist = now;
   applyStatusVisual();
   refreshPill();
   persistStatus(true);
+}
+
+/** 桌宠"重新出现在你面前"时怎么处理那段时间：默认冻结（抹掉），可选按旧行为结算。 */
+function resumeAfterAway(snapshot, now) {
+  return CFG.status.decayWhileAway
+    ? statusM.settleStatus(snapshot, now)
+    : statusM.freezeStatus(snapshot, now);
 }
 
 /* ================= 测试钩子 ================= */
@@ -1423,7 +1648,7 @@ function testState() {
     petLoaded: !!p, dragging: app.dragging, physActive: !!app.phys,
     interactive: app.ignoreSent === false,
     world: { w: app.worldW, h: app.worldH },
-    pet: p ? { w: p.w, h: p.h, x: p.pos.x, y: p.pos.y, anchor: { ...p.anchor } } : null,
+    pet: p ? { w: p.w, h: p.h, x: p.pos.x, y: p.pos.y, anchor: { ...p.anchor }, col: { ...p.col } } : null,
     animScale: p ? (() => {
       const d = app.anim.drawnScale || { x: 1, y: 1 };
       return { sx: app.anim.spr.x.s, sy: app.anim.spr.y.s, drawnSy: d.y, drawnSx: d.x };
@@ -1445,6 +1670,8 @@ function testState() {
     greetings: CFG.greeting.greetings || [],
     bubbleVisible: !!(bubbleEl && bubbleEl.classList.contains('show')),
     blinkAnim: { frames: app.blinkAnim.frames.length, probability: app.blinkAnim.probability },
+    blinkPlaying: app.blink.playing,
+    fxAnim: { groups: app.effectFx.groups.length, pending: app.effectFx.pending, playing: app.effectFx.playing },
     stateVisualVisible: app.stateVisual.visible,
     stateBodyReady: !!app.stateBody,
     bodyKind: app.pet === app.stateBody ? 'state' : 'main', // 当前活动身体
@@ -1459,6 +1686,8 @@ function testState() {
     })(),
     regionPanelOpen: !!app.regionPanelOpen,
     petPickerOpen: !!app.petPickerOpen,
+    voice: { ...voiceState },
+    voiceIndicatorOn: !!(voiceEl && voiceEl.classList.contains('on')),
     audio: {
       hasEl: !!app.audio.el, playing: !!app.audio.playing, index: app.audio.index,
       paused: !!(app.audio.el && app.audio.el.paused), playlistCount: app.audio.playlist.length,
@@ -1467,29 +1696,50 @@ function testState() {
   };
 }
 
-/** 启动时应用"可定制值"（app:init 的 dev 块）→ 填 app.greetings / app.blinkAnim / app.stateImagePath。
- *  无开发者模式（也无固化文件）时字段值 = config.js 默认 → 行为与旧版完全一致。 */
-async function applyDevInit(dev) {
-  const d = dev && typeof dev === 'object' ? dev : {};
-  if (Array.isArray(d.greetings) && d.greetings.length) app.greetings = d.greetings;
-  app.blinkAnim = { frames: [], probability: 1 };
-  if (d.blinkAnim && Array.isArray(d.blinkAnim.frames)) {
-    const frames = [];
-    for (const f of d.blinkAnim.frames) {
-      if (!f || !f.path) continue;
-      const img = await ipcRenderer.invoke('asset:readImage', f.path);
-      if (img) frames.push({ src: img.dataUrl, durationMs: clamp(Number(f.durationMs) || 150, 30, 5000) });
-    }
-    if (frames.length) {
-      app.blinkAnim.frames = frames;
-      const prob = Number(d.blinkAnim.probability);
-      app.blinkAnim.probability = Number.isFinite(prob) ? clamp(prob, 0, 1) : 1;
-    }
+/** 单帧路径 → 解码成"帧身体"（位图/锚点/碰撞盒 + 显示时长）。
+ *  "../" 开头 = 相对渲染层目录（src/renderer/）的内置素材（含 ../../动画素材/…），直读文件；
+ *  其余相对 data/ 或绝对路径，经主进程 asset:readImage（含 ICC 剥离）读取。 */
+async function decodeFramePath(p, durationMs) {
+  let body;
+  if (typeof p === 'string' && p.startsWith('../')) {
+    body = await decodeImageSrc(p, CFG.image.petMaxDim);
+  } else {
+    const img = await ipcRenderer.invoke('asset:readImage', p);
+    if (!img) throw new Error('帧图片读取失败');
+    body = await decodeImageDataUrl(img.dataUrl, CFG.image.petMaxDim);
   }
-  if (d.stateImagePath) {
-    const img = await ipcRenderer.invoke('asset:readImage', d.stateImagePath);
-    if (img) app.stateImagePath = img.dataUrl;
+  return { ...body, durationMs };
+}
+
+/** 启动时按 config.js 载入"可定制值"（config.js 是唯一定制入口）：
+ *  多帧眨眼帧 / 随机特效帧 → 解码成帧身体数组（单帧失败跳过，整组失败禁用该组）；
+ *  状态切换图只存原始路径（loadStateBody 会按路径 asset:readImage）。 */
+async function initCustomConfig() {
+  const frames = [];
+  for (const f of normalizeBlinkFrames(CFG.blinkAnim.frames)) {
+    try { frames.push(await decodeFramePath(f.path, f.durationMs)); } catch { /* 单帧失败跳过 */ }
   }
+  if (frames.length) {
+    app.blinkAnim.frames = frames;
+    const prob = Number(CFG.blinkAnim.probability);
+    app.blinkAnim.probability = Number.isFinite(prob) ? clamp(prob, 0, 1) : 1;
+  }
+  app.stateImagePath = CFG.stateImage.path || null;
+  // 随机特效动画组
+  for (const g of (CFG.effectAnim.groups || [])) {
+    if (!g || !Array.isArray(g.frames) || !g.frames.length) continue;
+    const fm = Number(g.frameMs) > 0 ? Number(g.frameMs) : CFG.blinkAnim.defaultFrameMs;
+    const bodies = [];
+    for (const p of g.frames) {
+      try { bodies.push(await decodeFramePath(p, fm)); } catch { break; } // 整组放弃（半组会显示残缺）
+    }
+    if (bodies.length === g.frames.length) app.effectFx.groups.push({ name: g.name || 'fx', frames: bodies });
+  }
+  // 降级单图眨眼（未配置多帧时使用；缺失只是不眨，不影响其它功能）。
+  // 必须自带 durationMs（playOverlayFrames 按帧取时长，undefined 会让眨眼瞬间闪没）。
+  try {
+    app.blinkBody = { ...(await decodeImageSrc('../assets/blink.png', CFG.image.petMaxDim)), durationMs: CFG.blink.zeroFrameMs };
+  } catch { app.blinkBody = null; }
 }
 
 async function init() {
@@ -1513,15 +1763,14 @@ async function init() {
   app.physicsEnabled = !(initInfo.settings && initInfo.settings.physicsEnabled === false);
   phase4Init(initInfo.settings, initInfo.workArea);
   updateUiRects();
-  await applyDevInit(initInfo.dev); // 可定制值要在 loadPet/loadStateBody（状态身体路径）/scheduleBlink 之前就位
+  await initCustomConfig(); // 可定制值要在 loadPet/loadStateBody（状态身体路径）之前就位
 
-  // 宠物主图路径由主进程统一解析（开发者配置覆盖 > 素材根目录 pet.png > settings 旧值 > 内置占位图）
+  // 宠物主图路径由主进程统一解析（素材根目录 pet.png > settings 旧值 > 内置主图）
   const petPath = initInfo.petPath;
   if (petPath) {
     const img = await ipcRenderer.invoke('asset:readImage', petPath);
     if (img) await loadPet(img.dataUrl);
-    // 占位图也照常显示，但保留提示条引导自定义（loadPet 会先隐藏提示条，这里再打开）
-    if (!img || initInfo.petIsPlaceholder) hintEl.style.display = 'block';
+    else { hintEl.style.display = 'block'; } // 读取失败是 #hint 的唯一用途（显示错误信息）
   } else {
     hintEl.style.display = 'block';
   }
@@ -1531,9 +1780,10 @@ async function init() {
   app.ready = true;
   window.__petReady = true;
   window.__pet = app;
-  scheduleBlink();
+  // 随机特效动画的第一次“再试”（测试模式不自动随机触发，由 __petTest 手动驱动）
+  if (!app.testMode) scheduleEffectTry();
   setTimeout(() => {
-    const list = app.greetings || CFG.greeting.greetings || [];
+    const list = CFG.greeting.greetings || [];
     if (list.length) showBubble(list[Math.floor(Math.random() * list.length)], CFG.greeting.durationMs);
   }, CFG.greeting.delayMs);
   if (app.testMode) {
@@ -1556,9 +1806,29 @@ async function init() {
           .map((f) => ({ src: f.src, durationMs: clamp(Number(f.durationMs) || 150, 30, 5000) }));
         app.blinkAnim.probability = clamp(Number(probability == null ? 1 : probability), 0, 1);
       },
+      // 立即播放一次眨眼（跳过零点掷骰；忙/状态形态/无帧 → false）
       playBlinkAnim() {
-        if (!app.blinkAnim.frames.length || !app.pet) return false;
-        playBlinkAnimSequence();
+        if (!canStartOverlay()) return false;
+        const frames = app.blinkAnim.frames.length ? app.blinkAnim.frames : (app.blinkBody ? [app.blinkBody] : []);
+        if (!frames.length) return false;
+        app.blink.playing = true;
+        playOverlayFrames(frames, () => { app.blink.playing = false; });
+        return true;
+      },
+      // —— 随机特效动画驱动（测试/调试）：注入帧组 + 立即起播（跳过 15~25s 与零点等待）——
+      setEffectFrames(frames) {
+        app.effectFx.groups = (Array.isArray(frames) && frames.length)
+          ? [{
+              name: 'test',
+              frames: frames
+                .filter((f) => f && f.src)
+                .map((f) => ({ src: f.src, durationMs: clamp(Number(f.durationMs) || 150, 30, 5000) })),
+            }]
+          : [];
+      },
+      playEffect() {
+        if (!app.effectFx.groups.length || !canStartOverlay()) return false;
+        startEffectPlayback();
         return true;
       },
       toggleStateVisual: () => toggleStateVisual(),
@@ -1614,8 +1884,8 @@ async function init() {
         return {
           bgOn: !!app.bgOn,
           bgRect: app.bgOn ? (() => { const r = bgEl.getBoundingClientRect(); return { left: r.left, top: r.top, width: r.width, height: r.height, cx: r.left + r.width / 2, bottom: r.top + r.height }; })() : null,
-          petCX: p ? p.pos.x + p.w / 2 : null,
-          petGround: p ? p.pos.y >= app.worldH - p.h - 1.5 : false,
+          petCX: p ? p.pos.x + p.col.ox + p.col.w / 2 : null, // 脚底中点 = 碰撞盒中心（与 layoutBg 同一语义）
+          petGround: p ? p.pos.y >= app.worldH - colBottomOff(p) - 1.5 : false,
           worldH: app.worldH,
         };
       },

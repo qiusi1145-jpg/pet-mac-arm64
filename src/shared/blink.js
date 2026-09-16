@@ -2,17 +2,8 @@
 
 const { CFG } = require('./config');
 
-/** 生成下一次眨眼的随机计划（间隔 + 时长），便于单元测试注入随机源。 */
-function planBlink(rng = Math.random) {
-  const c = CFG.blink;
-  return {
-    intervalMs: c.minIntervalMs + rng() * Math.max(0, c.maxIntervalMs - c.minIntervalMs),
-    durationMs: c.minDurationMs + rng() * Math.max(0, c.maxDurationMs - c.minDurationMs),
-  };
-}
-
 /**
- * 清洗"眨眼动画"帧配置（开发者模式配置 → 安全结构，纯函数）。
+ * 清洗"眨眼动画"帧配置（config.js 帧 → 安全结构，纯函数）。
  * 帧必须带非空 path；durationMs 缺失/非法时回退 defaultFrameMs，并夹到 [30, 5000]ms。
  */
 function normalizeBlinkFrames(raw) {
@@ -29,7 +20,7 @@ function normalizeBlinkFrames(raw) {
 }
 
 /**
- * 一次眨眼机会是否播放动画序列（整体触发概率 0~1，rng 可注入测试）。
+ * 一次眨眼/特效起播机会是否命中（触发概率 0~1，rng 可注入测试）。
  * probability <= 0 永不播；>= 1 必播；中间按概率掷骰。
  */
 function shouldPlayBlinkAnim(probability, rng = Math.random) {
@@ -39,5 +30,16 @@ function shouldPlayBlinkAnim(probability, rng = Math.random) {
   return rng() < p;
 }
 
-module.exports = { planBlink, normalizeBlinkFrames, shouldPlayBlinkAnim };
+/**
+ * 呼吸零点检测（眨眼/特效的起播门禁，纯函数）：
+ * prevOff/curOff = 主呼吸波的缩放偏移（scale - 1），符号翻转 = 波形恰好经过未变形尺寸。
+ * 任一为 0 不算翻转（呼吸幅度渐入期、暂停恢复瞬间不误触发）；非数一律 false。
+ */
+function isBreathZeroCross(prevOff, curOff) {
+  if (!Number.isFinite(prevOff) || !Number.isFinite(curOff)) return false;
+  if (prevOff === 0 || curOff === 0) return false;
+  return prevOff > 0 !== curOff > 0;
+}
+
+module.exports = { normalizeBlinkFrames, shouldPlayBlinkAnim, isBreathZeroCross };
 

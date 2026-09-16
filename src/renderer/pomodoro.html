@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta
+    http-equiv="Content-Security-Policy"
+    content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:"
+  />
+  <title>番茄钟</title>
+  <style>
+    :root { --ring: #ff7a59; --ringBreak: #35b58b; }
+    html, body { margin: 0; height: 100%; background: #fafafa; color: #222;
+      font: 13px/1.6 "Microsoft YaHei", sans-serif; user-select: none; -webkit-user-select: none; }
+    body { display: flex; flex-direction: column; box-sizing: border-box; padding: 12px 14px; }
+    header { display: flex; align-items: baseline; gap: 8px; }
+    header h1 { font-size: 15px; margin: 0; }
+    header .tip { color: #888; font-size: 12px; }
+    .stage { flex: 0 0 auto; display: flex; flex-direction: column; align-items: center; padding: 6px 0 2px; }
+    .dial { position: relative; width: 186px; height: 186px; }
+    .dial svg { transform: rotate(-90deg); }
+    .dial .center { position: absolute; inset: 0; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 0; }
+    .dial .clock { font: 700 38px/1.1 Consolas, "Courier New", monospace; letter-spacing: 1px; }
+    .dial .phase { color: #666; font-size: 12px; margin-top: 4px; }
+    .dial .count { color: #aaa; font-size: 11px; margin-top: 2px; }
+    .ctrls { display: flex; gap: 8px; margin: 10px 0 4px; }
+    button { font: 12px/1.6 "Microsoft YaHei"; padding: 4px 14px; border-radius: 6px;
+      border: 1px solid #bbb; background: #f2f2f2; cursor: pointer; }
+    button:hover { background: #e5f1fb; }
+    button.primary { background: #ff7a59; border-color: #e2633f; color: #fff; font-weight: 700; }
+    button.primary:hover { background: #f0673f; }
+    button:disabled { opacity: .5; cursor: default; }
+    main { flex: 1 1 auto; overflow: auto; margin-top: 6px; }
+    section { border: 1px solid #e0e0e0; border-radius: 8px; background: #fff;
+      padding: 9px 11px; margin-bottom: 10px; }
+    section h2 { font-size: 13px; margin: 0 0 6px; color: #2f6fb8; }
+    .row { display: flex; align-items: center; gap: 7px; margin: 7px 0; flex-wrap: wrap; }
+    .row > .lb { flex: 0 0 64px; color: #444; }
+    .chip { font: 12px/1.5 "Microsoft YaHei"; padding: 3px 10px; border-radius: 14px;
+      border: 1px solid #ddd; background: #f7f7f7; cursor: pointer; }
+    .chip:hover { background: #eef6ff; border-color: #b9d8f5; }
+    .chip.on { background: #ffece6; border-color: #ffb39b; color: #c2461f; font-weight: 700; }
+    input[type=number] { width: 72px; font: 13px/1.6 "Microsoft YaHei";
+      padding: 3px 7px; border: 1px solid #ccc; border-radius: 6px; }
+    .chk { display: flex; align-items: center; gap: 7px; margin: 6px 0; cursor: pointer; }
+    .hint { color: #999; font-size: 11px; margin: 2px 0 0; }
+    footer { display: flex; align-items: center; gap: 8px; padding-top: 8px; border-top: 1px solid #eee; }
+    footer .msg { flex: 1 1 auto; color: #2a8a3a; font-size: 12px; min-height: 18px; }
+    footer .msg.err { color: #cc4444; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>番茄钟</h1>
+    <span class="tip">专注 → 休息，节奏自己定；每完成一个专注桌宠会给你回一点体力。</span>
+  </header>
+
+  <div class="stage">
+    <div class="dial">
+      <svg width="186" height="186">
+        <circle cx="93" cy="93" r="84" fill="none" stroke="#ececec" stroke-width="10" />
+        <circle id="arc" cx="93" cy="93" r="84" fill="none" stroke="var(--ring)" stroke-width="10"
+          stroke-linecap="round" stroke-dasharray="527.8" stroke-dashoffset="527.8" />
+      </svg>
+      <div class="center">
+        <div class="clock" id="clock">25:00</div>
+        <div class="phase" id="phase">专注</div>
+        <div class="count" id="count"></div>
+      </div>
+    </div>
+    <div class="ctrls">
+      <button id="toggleBtn" class="primary">开始</button>
+      <button id="resetBtn">重置</button>
+      <button id="skipBtn">跳过</button>
+    </div>
+  </div>
+
+  <main>
+    <section>
+      <h2>时长（分钟）</h2>
+      <div class="row"><span class="lb">专注</span><span id="preFocus"></span>
+        <input id="inFocus" type="number" min="1" max="180" step="1" /></div>
+      <div class="row"><span class="lb">短休</span><span id="preShort"></span>
+        <input id="inShort" type="number" min="1" max="180" step="1" /></div>
+      <div class="row"><span class="lb">长休</span><span id="preLong"></span>
+        <input id="inLong" type="number" min="1" max="180" step="1" /></div>
+      <div class="row"><span class="lb">长休间隔</span>
+        <input id="inEvery" type="number" min="1" max="12" step="1" />
+        <span class="hint" style="margin:0">每完成几个专注用一次长休</span></div>
+      <label class="chk"><input id="autoNext" type="checkbox" /> 一段结束后自动开始下一段</label>
+      <p class="hint">改动会立即生效（下一次重置/切段时按新时长走），并记住到下次启动。</p>
+    </section>
+  </main>
+
+  <footer>
+    <span class="msg" id="msg"></span>
+    <button id="saveBtn">保存时长</button>
+  </footer>
+  <script src="./pomodoro.js"></script>
+</body>
+</html>

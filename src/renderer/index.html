@@ -21,18 +21,31 @@
        不再是铺满全窗：人物移动时背景保持“人物站在图底边正中”。 */
     #bg { position: absolute; left: 0; top: 0; width: 0; height: 0; object-fit: contain;
       opacity: 0; pointer-events: none; z-index: 0; }
-    /* 宠物层 */
+    /* 宠物层。本体显示走 <img>（原图直通，浏览器按显示尺寸高质量光栅化，高分屏不发糊）；
+       画布只用于判定分析（位图/锚点/碰撞盒），绝不参与显示（单一缩放管线）。 */
     #petWrap { position: absolute; left: 0; top: 0; z-index: 2; pointer-events: none;
       will-change: transform; }
-    #petWrap canvas { display: block; }
-    #blink { position: absolute; inset: 0; width: 100%; height: 100%; display: none;
+    #petWrap > #pet { display: block; }
+    /* 叠加帧层（眨眼 / 随机特效动画：整帧“接管”本体显示）：
+       尺寸/位置/缩放原点全部由渲染层逐帧设置；显示中隐藏本体（帧 = 完整整图，防双影）。 */
+    #blink { position: absolute; left: 0; top: 0; width: 0; height: 0; display: none;
       pointer-events: none; }
-    /* 状态形象不再用独立图层：与主形象共用 #pet 画布（切换=重画另一具身体，判定随身体走） */
     /* 特效/爱心层 */
     #fx { position: absolute; inset: 0; z-index: 3; pointer-events: none; overflow: visible; }
     /* 交互 UI 层（状态胶囊 / 菜单 / 弹层） */
     #ui { position: absolute; inset: 0; z-index: 5; pointer-events: none; }
     #ui > .interactive { pointer-events: auto; }
+
+    /* 语音"在听"小标识：纯视觉反馈（pointer-events:none → **不进 uiRects**，
+       不参与像素穿透判定，红线区零新增命中矩形）。 */
+    #voice { position: absolute; z-index: 8; display: none; pointer-events: none;
+      padding: 2px 9px; border-radius: 12px; background: rgba(20,20,20,.72); color: #fff;
+      font: 12px/20px "Microsoft YaHei", sans-serif; white-space: nowrap; }
+    #voice.on { display: block; }
+    #voice .bar { display: inline-block; vertical-align: middle; width: 34px; height: 6px;
+      border-radius: 3px; background: rgba(255,255,255,.25); margin-left: 6px; overflow: hidden; }
+    #voice .bar > i { display: block; height: 100%; width: 0; background: #4ade80; }
+    #voice.wake { box-shadow: 0 0 0 1px rgba(74,222,128,.7); }
 
     /* 占位提示（尚无宠物时） */
     #hint { position: absolute; left: 12px; bottom: 12px; color: rgba(0,0,0,.55);
@@ -123,11 +136,12 @@
 <body>
   <div id="world">
     <img id="bg" alt="" draggable="false" />
-    <div id="petWrap"><canvas id="pet"></canvas><img id="blink" alt="" draggable="false" /></div>
+    <div id="petWrap"><img id="pet" alt="" draggable="false" /><img id="blink" alt="" draggable="false" /></div>
     <div id="fx"></div>
     <div id="ui">
       <div id="pill" class="interactive" title="点击折叠/展开状态"><span class="dot">●</span><span class="txt"></span></div>
       <div id="bubble"></div>
+      <div id="voice"><span class="vt">在听…</span><span class="bar"><i></i></span></div>
       <div id="panel" class="interactive">
         <div class="pt">活动区域 <span id="panelDims"></span></div>
         <div class="row"><button data-k="w-" title="变窄">⇤ 变窄</button><button data-k="w+" title="变宽">变宽 ⇥</button></div>
@@ -157,7 +171,7 @@
       </div>
     </div>
     <div id="ringWrap"><svg width="68" height="68"><circle cx="34" cy="34" r="30" fill="none" stroke="rgba(0,0,0,.18)" stroke-width="4"/><circle id="ringArc" cx="34" cy="34" r="30" fill="none" stroke="var(--ringColor)" stroke-width="4" stroke-linecap="round" stroke-dasharray="188.5" stroke-dashoffset="188.5"/></svg></div>
-    <div id="hint">当前是占位宠物：把你的 pet.png 放入 data\assets\pet\ 后重启即可替换</div>
+    <div id="hint"></div>
   </div>
   <script src="./boot.js"></script>
 </body>

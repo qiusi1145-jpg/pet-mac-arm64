@@ -1,6 +1,6 @@
 'use strict';
 /** 测试形状构建器（内存位图），供 gen.js 与单测共用。 */
-const { makeBitmap, paintRect } = require('../../src/shared/pixel');
+const { makeBitmap, paintRect } = require('../../src/shared/geom');
 
 /** 实心圆盘。返回 {width,height,data}。 */
 function circle(size, radius, rgba) {

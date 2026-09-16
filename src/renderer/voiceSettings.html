@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta
+    http-equiv="Content-Security-Policy"
+    content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:"
+  />
+  <title>语音聊天设置</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #fafafa; color: #222;
+      font: 13px/1.6 "Microsoft YaHei", sans-serif; user-select: none; -webkit-user-select: none; }
+    body { display: flex; flex-direction: column; box-sizing: border-box; padding: 12px 14px; }
+    header h1 { font-size: 15px; margin: 0 0 2px; }
+    header .tip { color: #888; font-size: 12px; margin-bottom: 10px; }
+    main { flex: 1 1 auto; overflow: auto; }
+    section { border: 1px solid #e0e0e0; border-radius: 8px; background: #fff;
+      padding: 9px 11px; margin-bottom: 10px; }
+    section h2 { font-size: 13px; margin: 0 0 6px; color: #2f6fb8; }
+    section .hint { color: #999; font-size: 11px; margin: 4px 0 0; }
+    label.mode { display: flex; align-items: flex-start; gap: 8px; padding: 5px 4px;
+      border-radius: 6px; cursor: pointer; }
+    label.mode:hover { background: #f2f8ff; }
+    label.mode input { margin-top: 3px; }
+    label.mode .mt { font-weight: 700; }
+    label.mode .md { color: #888; font-size: 11px; }
+    .field { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+    .field > .lb { flex: 0 0 92px; color: #444; }
+    .field > .va { flex: 1 1 auto; display: flex; align-items: center; gap: 6px; }
+    select, input[type=text], input[type=number] { font: 13px/1.6 "Microsoft YaHei";
+      padding: 3px 7px; border: 1px solid #ccc; border-radius: 6px; background: #fff; }
+    input[type=text], select { flex: 1 1 auto; min-width: 0; }
+    input[type=number] { width: 78px; }
+    .chk { display: flex; align-items: center; gap: 7px; margin: 5px 0; cursor: pointer; }
+    .keybox { font: 12px/1.6 Consolas, "Courier New", monospace; min-width: 132px;
+      padding: 3px 10px; border-radius: 6px; border: 1px solid #bbb; background: #f7f7f7;
+      color: #333; cursor: pointer; }
+    .keybox:hover { background: #eef6ff; border-color: #b9d8f5; }
+    .keybox.rec { background: #fff5e6; border-color: #f0b96b; color: #a8631a;
+      box-shadow: 0 0 0 2px rgba(240,185,107,.35); }
+    .kwline { font: 12px/1.5 Consolas, "Courier New", monospace; color: #444;
+      background: #f6f6f6; border: 1px dashed #ddd; border-radius: 6px;
+      padding: 5px 8px; margin-top: 6px; word-break: break-all; }
+    .kwline.bad { color: #b06000; border-color: #f0d5a8; background: #fffaf0; }
+    footer { display: flex; align-items: center; gap: 8px; padding-top: 8px; border-top: 1px solid #eee; }
+    footer .msg { flex: 1 1 auto; color: #2a8a3a; font-size: 12px; min-height: 18px; }
+    footer .msg.err { color: #cc4444; }
+    button { font: 12px/1.6 "Microsoft YaHei"; padding: 4px 14px; border-radius: 6px;
+      border: 1px solid #bbb; background: #f2f2f2; cursor: pointer; }
+    button:hover { background: #e5f1fb; }
+    button.primary { background: #2f9bff; border-color: #1b7fdd; color: #fff; font-weight: 700; }
+    button.primary:hover { background: #1f8aef; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>语音聊天设置</h1>
+    <div class="tip">全部离线：音频不出本机、默认不保存录音。识别结果与打字聊天走同一套回复规则。</div>
+  </header>
+  <main>
+    <section>
+      <h2>怎么跟桌宠说话</h2>
+      <div class="field">
+        <span class="lb">语音对话</span>
+        <span class="va">
+          <span class="hint" style="margin:0">在<b>聊天窗</b>点 🎤 进入 / 再点一次退出。进入后自动连续多轮：
+            说完静音约 1.2 秒自动断句 → 停掉麦克风等模型回复 → 回复到了自动接着听（不需要任何点击）。
+            「啊」一声这类过短的话不会发给大模型。</span>
+        </span>
+      </div>
+      <div class="field">
+        <span class="lb">后台唤醒</span>
+        <span class="va">
+          <label class="chk"><input id="wakeEnabled" type="checkbox" /> 允许唤醒词唤醒（麦克风常驻监听）</label>
+        </span>
+      </div>
+      <div class="field">
+        <span class="lb">聊天窗内按键</span>
+        <span class="va">
+          <button class="keybox" id="keyLocal" type="button"></button>
+          <span class="hint" style="margin:0">按住说话，松开立即提交这一句</span>
+        </span>
+      </div>
+      <div class="field">
+        <span class="lb">全局按键</span>
+        <span class="va">
+          <button class="keybox" id="keyGlobal" type="button"></button>
+          <button id="keyClear" type="button">清除</button>
+          <span class="hint" style="margin:0">任何窗口按一下进入 / 再按一下退出</span>
+        </span>
+      </div>
+      <p class="hint">后台唤醒 = 没开聊天窗时也能喊一声叫醒我，代价是麦克风要一直开着；关掉它就只在聊天窗里点 🎤 说话。
+        <b>按键说话</b>：点上面的键位框 → 直接按下你想用的键，就记下来了（Esc 取消）。
+        全局键**只有按下事件、没有松开事件**（Electron 的系统限制），所以它只能做成"按一下进入 / 再按一下退出"；
+        聊天窗内的键才是真正的"按住"。全局键会**独占**该键（其它程序收不到），默认**留空不注册**。
+        默认聊天窗内是 <b>Ctrl + Shift + Space</b> —— 特意避开 Ctrl+空格，那是中文输入法的中英切换。</p>
+    </section>
+
+    <section>
+      <h2>唤醒词</h2>
+      <div class="field">
+        <span class="lb">内置词库</span>
+        <span class="va"><select id="wakePick"></select></span>
+      </div>
+      <div class="field">
+        <span class="lb">唤醒词</span>
+        <span class="va"><input id="wakeWord" type="text" maxlength="20" spellcheck="false" placeholder="例如：桌宠桌宠" /></span>
+      </div>
+      <div class="field">
+        <span class="lb">音素串</span>
+        <span class="va"><input id="wakeTokens" type="text" maxlength="200" spellcheck="false" placeholder="留空 = 按唤醒词查内置词库" /></span>
+      </div>
+      <div class="field">
+        <span class="lb">灵敏度</span>
+        <span class="va">
+          <input id="wakeBoost" type="number" step="0.1" min="0.1" max="10" />
+          <span class="hint" style="margin:0">越大越容易唤醒</span>
+          <input id="wakeThreshold" type="number" step="0.05" min="0.01" max="1" />
+          <span class="hint" style="margin:0">越大越严格</span>
+        </span>
+      </div>
+      <div class="kwline" id="kwLine"></div>
+      <p class="hint">识别引擎吃的是音素串而不是汉字，所以自定义唤醒词需要填音素串（内置词库里的词可直接选）。</p>
+    </section>
+
+    <section>
+      <h2>识别模型</h2>
+      <div class="field">
+        <span class="lb">档位</span>
+        <span class="va"><select id="model"></select></span>
+      </div>
+      <div class="field">
+        <span class="lb">麦克风</span>
+        <span class="va"><select id="device"></select></span>
+      </div>
+      <p class="hint" id="status"></p>
+      <!-- 语音"卡住/已停用"时用户能自救的出口：重建识别进程（不必重启应用） -->
+      <div class="field">
+        <span class="lb"></span>
+        <span class="va"><button id="retryBtn" type="button">重试（重建语音引擎）</button></span>
+      </div>
+    </section>
+
+    <section>
+      <h2>开关</h2>
+      <label class="chk"><input id="enabled" type="checkbox" /> 启用语音聊天</label>
+      <label class="chk"><input id="duckBgm" type="checkbox" /> 听/识别时自动压低背景音乐（防止被自己的音乐干扰）</label>
+      <label class="chk"><input id="showPartial" type="checkbox" /> 显示实时字幕（边说边出字）</label>
+    </section>
+  </main>
+  <footer>
+    <span class="msg" id="msg"></span>
+    <button id="revertBtn">还原默认</button>
+    <button id="saveBtn" class="primary">保存</button>
+  </footer>
+  <script src="./voiceSettings.js"></script>
+</body>
+</html>

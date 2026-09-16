@@ -10,10 +10,19 @@
     "test": "node test/fixtures/gen.js && node --test test/unit/*.test.js",
     "test:smoke": "node test/smoke/smoke.js",
     "test:ui": "node test/ui/ui.test.js",
-    "gen:fixtures": "node test/fixtures/gen.js"
+    "gen:fixtures": "node test/fixtures/gen.js",
+    "voice:fetch": "node tools/fetch-voice-model.js",
+    "voice:spike": "node tools/spike-sherpa.js",
+    "voice:spike:electron": "electron tools/spike-sherpa.js",
+    "voice:diag": "electron . --voice-diag",
+    "voice:e2e": "electron . --voice-e2e",
+    "llm:e2e": "electron . --llm-e2e"
   },
   "license": "UNLICENSED",
   "devDependencies": {
     "electron": "^37.0.0"
+  },
+  "dependencies": {
+    "sherpa-onnx-node": "^1.13.8"
   }
 }
