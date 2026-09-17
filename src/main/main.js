@@ -29,6 +29,8 @@ const { ChatLog, resolveLogFile } = require('./chatLog');
 const chatM = require('../shared/chat');
 const llmM = require('../shared/chat/llm');
 const { ACCENTS, normalizeAccentPref } = require('../shared/uiTheme');
+const PS = require('../shared/pomodoroStats');          // 番茄钟学习记录/成就（纯函数）
+const pomoStatsStore = require('./pomodoroStatsStore'); // 同上，持久化（data/pomodoro-stats.json）
 const { WinEnum, isSystemWindow } = require('./winenum');
 
 const PET_NAME = '桌宠';
@@ -143,6 +145,7 @@ class PetApp {
     this.tray = null;
     this.userDataRoot = app.getPath('userData'); // 便携模式 = <项目>/data；测试 = PET_USERDATA
     this.store = new Store(this.userDataRoot);
+    this.pomoStats = pomoStatsStore.load(this.userDataRoot); // 番茄钟学习记录（启动读一次，之后内存+落盘）
     this.winEnum = new WinEnum(this.userDataRoot);
     this.assetsDir = path.join(this.userDataRoot, 'assets');
     // 素材根目录（需求："换图即定制"）：宠物主图（约定文件 pet.png）、眨眼帧、状态图都放这里。
@@ -561,6 +564,10 @@ class PetApp {
       return { ok: true, prefs: n };
     });
     ipcMain.handle('pomodoro:report', (_e, payload) => this.pomodoroReport(payload));
+    // 番茄钟学习记录（渲染层只读；记账走 pomodoro:report / pomodoro:abort）
+    ipcMain.handle('pomodoro:stats:load', () => this.pomoStats);
+    // 窗口关闭瞬间 sendSync 会阻塞渲染进程 → 用 on（一次性快速落盘），不能用 handle
+    ipcMain.on('pomodoro:abort:sync', (e, payload) => { e.returnValue = this.pomodoroReport(payload); });
     ipcMain.handle('planner:load', () => this.store.get().planner || null);
     ipcMain.handle('planner:save', (_e, raw) => {
       const n = normalizePlanner(raw) || { items: [] };
@@ -938,13 +945,31 @@ class PetApp {
   }
 
   /**
-   * 番茄钟结算：完成一个"专注" → 桌宠回体力/情绪 + 气泡夸奖。
-   * 与"随机催促/催背"同一条气泡通道（bubble:chat），不新增通道。
+   * 番茄钟结算（2026-09-17 扩展为"记账 + 成就"总入口）：
+   *  - phase='focus'：完成一个专注 → 回体力/情绪 + 气泡夸奖 + 记账 + 评成就；
+   *  - phase='abort'：专注被中断（≥1 分钟）→ 只记账（不奖励），也可能解锁成就；
+   *  - phase='break'：休息结束 → 不记账（休息不算学习），保持原行为。
+   * 气泡走与"随机催促/催背"同一条通道（bubble:chat），不新增通道。
    */
   pomodoroReport(payload) {
     const p = payload || {};
     const isFocus = p.phase === 'focus';
+    const isAbort = p.phase === 'abort';
     const minutes = Number.isFinite(Number(p.minutes)) ? Math.round(Number(p.minutes)) : 0;
+    let unlocked = [];
+    if (isFocus || isAbort) {
+      // 记账：完成与中断都进学习记录；成就解锁可能连带气泡夸奖
+      const r = pomoStatsStore.record(this.userDataRoot, this.pomoStats, {
+        startedAt: Number(p.startedAt) || Date.now(),
+        plannedMin: Number(p.plannedMin) || 0,
+        minutes,
+        ok: isFocus,
+        tag: typeof p.tag === 'string' ? p.tag : '',
+        flowStreak: Number(p.flowStreak) || 0,
+      }, Date.now());
+      this.pomoStats = r.stats;
+      unlocked = r.unlocked;
+    }
     if (isFocus) {
       const energy = CFG.pomodoro.rewardEnergy;
       const mood = CFG.pomodoro.rewardMood;
@@ -954,8 +979,16 @@ class PetApp {
         : CFG.pomodoro.strings.doneFocus;
       this.showIfHidden();
       this.send('bubble:chat', { text, ms: CFG.chat.bubbleDurationMs });
+      // 成就解锁 → 追加一条夸奖气泡（错开：直接改文案拼接太长，分两条先后弹）
+      if (unlocked.length) {
+        const names = unlocked.map((u) => u.name).join('、');
+        setTimeout(() => {
+          this.showIfHidden();
+          this.send('bubble:chat', { text: `🏆 解锁成就：${names}！`, ms: 6000 });
+        }, 2600);
+      }
     }
-    return { ok: true };
+    return { ok: true, unlocked, stats: this.pomoStats };
   }
 
   /* ---------------- 语音聊天设置（偏好 + 状态） ---------------- */

@@ -665,7 +665,7 @@ const CFG = {
    * 完成一个专注会回一点体力/情绪（让"陪伴"与"学习"互相有反馈）。 */
   pomodoro: {
     windowWidth: 400,
-    windowHeight: 540,
+    windowHeight: 580,
     // 预设时长（分钟）——窗口里的快捷按钮
     presets: {
       focus: [15, 25, 45, 60],
@@ -682,6 +682,20 @@ const CFG = {
     tickMs: 250,              // 计时刷新间隔（ms）
     rewardEnergy: 8,          // 完成一个专注 → 体力 +（0 = 不回）
     rewardMood: 2,            // 完成一个专注 → 情绪 +
+    /* ---- 学习记录与成就（2026-09-17 起）----
+     * 数据存 data/pomodoro-stats.json（便携目录内，随包带走）；
+     * entries 截断保留最近 N 条，days（每天累计分钟）全量保留（一年才几百条）。 */
+    statsMaxEntries: 400,     // 明细记录最多保留条数（防文件无限膨胀）
+    abortMinMs: 60 * 1000,    // 中断的专注累计 ≥1 分钟才记（以下的忽略）
+    /* 成就阶梯（数值即"门槛"）；时段成就（早鸟/夜猫）与心流不用阶梯，达到即解锁 */
+    statsAchievements: {
+      timeMin: [60, 300, 600, 3000, 6000],      // 累计学习分钟：1h/5h/10h/50h/100h
+      doneCount: [1, 10, 50, 100, 500],         // 完整专注次数
+      streakDays: [3, 7, 14, 30, 100],          // 连续学习天数
+      dayMin: [30, 60, 120, 240],               // 单日纪录：30m/1h/2h/4h
+      longFocusMin: [45, 60],                   // 单次完整专注 ≥45 / ≥60 分钟
+      flowCount: [4],                           // 一次使用中不中断连续完成 4 个专注
+    },
     strings: {
       phaseFocus: '专注',
       phaseShortBreak: '短休',

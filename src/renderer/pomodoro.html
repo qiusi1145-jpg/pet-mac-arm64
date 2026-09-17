@@ -50,6 +50,41 @@
     footer { display: flex; align-items: center; gap: 8px; padding-top: 8px; border-top: 1px solid #f3e7de; }
     footer .msg { flex: 1 1 auto; color: var(--ok); font-size: 12px; min-height: 18px; }
     footer .msg.err { color: var(--bad); }
+    /* ---- 标签页：计时 / 记录 / 成就 ---- */
+    .tabs { display: flex; gap: 4px; margin: 8px 0 6px; }
+    .tabs button { flex: 1 1 0; padding: 5px 0; border-radius: var(--r-sm); font-weight: 700; }
+    .tabs button.on { background: var(--pom); border-color: var(--pom-strong); color: var(--pom-on); }
+    /* 这次学什么（可选标签） */
+    .tagrow { display: flex; align-items: center; gap: 7px; margin: 2px 0 6px; }
+    .tagrow .lb { flex: 0 0 auto; color: var(--text-2); font-size: 12px; }
+    #tagInput { flex: 1 1 auto; min-width: 0; font: 12px/1.6 "Microsoft YaHei"; color: var(--text);
+      padding: 3px 8px; border: 1px solid var(--input-border); border-radius: var(--r-pill); }
+    /* ---- 记录页 ---- */
+    .cards { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin-bottom: 9px; }
+    .card { border: 1px solid var(--card-border); border-radius: var(--r-md); background: var(--card);
+      padding: 7px 10px; }
+    .card .k { color: var(--text-3); font-size: 11px; }
+    .card .v { font: 700 15px/1.4 "Microsoft YaHei"; color: #b35f2e; }
+    .card .s { color: var(--text-3); font-size: 11px; }
+    .rec { display: flex; align-items: center; gap: 8px; padding: 5px 9px;
+      border: 1px solid var(--hairline); border-radius: var(--r-md); background: var(--card); margin-bottom: 5px; }
+    .rec .tm { flex: 0 0 76px; color: var(--text-3); font-size: 11px; }
+    .rec .tag { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .rec .tag.empty { color: var(--text-3); }
+    .rec .du { flex: 0 0 auto; font-weight: 700; }
+    .rec .st { flex: 0 0 auto; font-size: 11px; padding: 1px 8px; border-radius: var(--r-pill); }
+    .rec .st.ok { color: #2a7a44; background: #e8f5ec; }
+    .rec .st.no { color: #a8631a; background: #fbf1e2; }
+    .empty { color: var(--text-3); text-align: center; padding: 24px 0; }
+    /* ---- 成就页 ---- */
+    .agrid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+    .badge { border: 1px solid var(--card-border); border-radius: var(--r-md); background: var(--card);
+      padding: 8px 9px; }
+    .badge .ic { font-size: 17px; }
+    .badge .nm { font-weight: 700; font-size: 12px; margin-top: 2px; }
+    .badge .dt { color: var(--text-3); font-size: 10px; margin-top: 1px; }
+    .badge.off { opacity: .45; filter: grayscale(.6); }
+    .badge.on { border-color: #f2b795; background: #fffaf6; }
   </style>
 </head>
 <body>
@@ -58,42 +93,68 @@
     <span class="tip">专注 → 休息，节奏自己定；每完成一个专注桌宠会给你回一点体力。</span>
   </header>
 
-  <div class="stage">
-    <div class="dial">
-      <svg width="186" height="186">
-        <circle cx="93" cy="93" r="84" fill="none" stroke="#ececec" stroke-width="10" />
-        <circle id="arc" cx="93" cy="93" r="84" fill="none" stroke="var(--ring)" stroke-width="10"
-          stroke-linecap="round" stroke-dasharray="527.8" stroke-dashoffset="527.8" />
-      </svg>
-      <div class="center">
-        <div class="clock" id="clock">25:00</div>
-        <div class="phase" id="phase">专注</div>
-        <div class="count" id="count"></div>
-      </div>
-    </div>
-    <div class="ctrls">
-      <button id="toggleBtn" class="primary">开始</button>
-      <button id="resetBtn">重置</button>
-      <button id="skipBtn">跳过</button>
-    </div>
+  <div class="tabs">
+    <button id="tabBtnTimer" class="on">计时</button>
+    <button id="tabBtnRecords">记录</button>
+    <button id="tabBtnAch">成就</button>
   </div>
 
-  <main>
-    <section>
-      <h2>时长（分钟）</h2>
-      <div class="row"><span class="lb">专注</span><span id="preFocus"></span>
-        <input id="inFocus" type="number" min="1" max="180" step="1" /></div>
-      <div class="row"><span class="lb">短休</span><span id="preShort"></span>
-        <input id="inShort" type="number" min="1" max="180" step="1" /></div>
-      <div class="row"><span class="lb">长休</span><span id="preLong"></span>
-        <input id="inLong" type="number" min="1" max="180" step="1" /></div>
-      <div class="row"><span class="lb">长休间隔</span>
-        <input id="inEvery" type="number" min="1" max="12" step="1" />
-        <span class="hint" style="margin:0">每完成几个专注用一次长休</span></div>
-      <label class="chk"><input id="autoNext" type="checkbox" /> 一段结束后自动开始下一段</label>
-      <p class="hint">改动会立即生效（下一次重置/切段时按新时长走），并记住到下次启动。</p>
-    </section>
-  </main>
+  <div id="tabTimer">
+    <div class="stage">
+      <div class="dial">
+        <svg width="186" height="186">
+          <circle cx="93" cy="93" r="84" fill="none" stroke="#ececec" stroke-width="10" />
+          <circle id="arc" cx="93" cy="93" r="84" fill="none" stroke="var(--ring)" stroke-width="10"
+            stroke-linecap="round" stroke-dasharray="527.8" stroke-dashoffset="527.8" />
+        </svg>
+        <div class="center">
+          <div class="clock" id="clock">25:00</div>
+          <div class="phase" id="phase">专注</div>
+          <div class="count" id="count"></div>
+        </div>
+      </div>
+      <div class="ctrls">
+        <button id="toggleBtn" class="primary">开始</button>
+        <button id="resetBtn">重置</button>
+        <button id="skipBtn">跳过</button>
+      </div>
+      <div class="tagrow">
+        <span class="lb">这次学：</span>
+        <input id="tagInput" placeholder="学什么？（选填，会记进学习记录）" maxlength="24" />
+      </div>
+    </div>
+
+    <main>
+      <section>
+        <h2>时长（分钟）</h2>
+        <div class="row"><span class="lb">专注</span><span id="preFocus"></span>
+          <input id="inFocus" type="number" min="1" max="180" step="1" /></div>
+        <div class="row"><span class="lb">短休</span><span id="preShort"></span>
+          <input id="inShort" type="number" min="1" max="180" step="1" /></div>
+        <div class="row"><span class="lb">长休</span><span id="preLong"></span>
+          <input id="inLong" type="number" min="1" max="180" step="1" /></div>
+        <div class="row"><span class="lb">长休间隔</span>
+          <input id="inEvery" type="number" min="1" max="12" step="1" />
+          <span class="hint" style="margin:0">每完成几个专注用一次长休</span></div>
+        <label class="chk"><input id="autoNext" type="checkbox" /> 一段结束后自动开始下一段</label>
+        <p class="hint">改动会立即生效（下一次重置/切段时按新时长走），并记住到下次启动。</p>
+      </section>
+    </main>
+  </div>
+
+  <div id="tabRecords" hidden>
+    <div class="cards">
+      <div class="card"><div class="k">今日专注</div><div class="v" id="stToday">0 分钟</div></div>
+      <div class="card"><div class="k">本周专注</div><div class="v" id="stWeek">0 分钟</div></div>
+      <div class="card"><div class="k">连续学习</div><div class="v" id="stStreak">0 天</div><div class="s" id="stStreakBest"></div></div>
+      <div class="card"><div class="k">累计专注</div><div class="v" id="stTotal">0 分钟</div><div class="s" id="stTotalS"></div></div>
+    </div>
+    <div id="recList"></div>
+  </div>
+
+  <div id="tabAch" hidden>
+    <div class="agrid" id="achGrid"></div>
+  </div>
 
   <footer>
     <span class="msg" id="msg"></span>
