@@ -1145,16 +1145,34 @@ function onStatusInteract(kind) {
 }
 
 /**
- * 番茄钟等"外部奖励"入口：给情绪/体力加一个增量（夹 0-100），走与互动同一套
+ * 番茄钟等"外部奖励"入口：给情绪/体力/好感度加增量（各夹到自身上限），走与互动同一套
  * 视觉刷新 + 持久化。负值也可（将来做"熬夜扣体力"）。
+ * 好感度（2026-09-17 起番茄钟奖励走这里）：跨过里程碑档位（每 20 点）会触发爱心上浮，
+ * 与互动掷好感共用同一套动画（否则"好感涨了没反馈"）。
  */
 function rewardPet(patch) {
   if (!app.status || !patch) return;
   const next = { ...app.status };
   if (Number.isFinite(patch.energy)) next.energy = clamp(next.energy + patch.energy, 0, 100);
   if (Number.isFinite(patch.mood)) next.mood = clamp(next.mood + patch.mood, 0, 100);
+  let levels = [];
+  if (Number.isFinite(patch.affinity) && patch.affinity !== 0) {
+    const before = Number(next.affinity) || 0;
+    const after = clamp(before + patch.affinity, 0, CFG.status.affinityCap);
+    next.affinity = after;
+    levels = statusM.crossedMilestone(before, after);
+  }
   next.lastTs = Date.now();
   app.status = next;
+  if (levels.length && app.pet) {
+    for (const lv of levels) {
+      spawnHeart(
+        app.pet.pos.x + app.pet.anchor.x,
+        app.pet.pos.y + 6,
+        Math.round(lv / CFG.status.affinityMilestoneStep)
+      );
+    }
+  }
   applyStatusVisual();
   refreshPill();
   persistStatus(true);

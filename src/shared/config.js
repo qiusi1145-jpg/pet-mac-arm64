@@ -680,7 +680,7 @@ const CFG = {
     longBreakEvery: 4,        // 每完成 N 个专注 → 下一次休息用长休
     autoStartNext: false,     // 一段结束后是否自动开始下一段
     tickMs: 250,              // 计时刷新间隔（ms）
-    rewardEnergy: 8,          // 完成一个专注 → 体力 +（0 = 不回）
+    rewardAffinity: 2,        // 完成一个专注 → 好感度 +（2026-09-17 起：原为回体力，用户改为加好感；0 = 不加）
     rewardMood: 2,            // 完成一个专注 → 情绪 +
     /* ---- 学习记录与成就（2026-09-17 起）----
      * 数据存 data/pomodoro-stats.json（便携目录内，随包带走）；

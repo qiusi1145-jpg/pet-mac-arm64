@@ -971,11 +971,11 @@ class PetApp {
       unlocked = r.unlocked;
     }
     if (isFocus) {
-      const energy = CFG.pomodoro.rewardEnergy;
+      const affinity = CFG.pomodoro.rewardAffinity; // 2026-09-17 起：奖励改为加好感度（原为回体力）
       const mood = CFG.pomodoro.rewardMood;
-      if (energy || mood) this.send('pet:reward', { energy, mood });
+      if (affinity || mood) this.send('pet:reward', { affinity, mood });
       const text = minutes > 0
-        ? `专注 ${minutes} 分钟完成，真棒！${energy ? `体力 +${energy}` : ''}`
+        ? `专注 ${minutes} 分钟完成，真棒！${affinity ? `好感 +${affinity}` : ''}`
         : CFG.pomodoro.strings.doneFocus;
       this.showIfHidden();
       this.send('bubble:chat', { text, ms: CFG.chat.bubbleDurationMs });
