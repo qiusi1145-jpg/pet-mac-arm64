@@ -713,8 +713,8 @@ const CFG = {
    * 一个日程视图 + **桌宠主图缩小后作窗口装饰**（右下角，跟随同一套素材解析顺序，
    * 换 data/assets/pet/pet.png 即换装饰，和主窗保持一致）。 */
   planner: {
-    windowWidth: 580,
-    windowHeight: 660,
+    windowWidth: 640,    // 2026-09-17 三视图升级：640×700（原 580×660），月历/课表需要更多空间
+    windowHeight: 700,
     maxItems: 300,        // 单条 ≤200 字、总条数上限（防 settings.json 无限膨胀）
     maxTextLen: 200,
     // 装饰小桌宠（主图缩小）

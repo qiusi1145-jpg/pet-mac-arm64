@@ -11,6 +11,9 @@ const { CFG } = require('./config');
 
 const pad2 = (n) => String(n).padStart(2, '0');
 
+/** 视图白名单（2026-09-17 三视图：单日 / 周课表 / 月历）。 */
+const VIEWS = ['day', 'week', 'month'];
+
 /** Date → 'YYYY-MM-DD'（本地时区，不用 toISOString 以免 UTC 漂移）。 */
 function dateKey(d) {
   const dt = d instanceof Date ? d : new Date(d);
@@ -83,6 +86,7 @@ function normalizeItem(raw) {
 /**
  * 清洗 settings.planner（整表）。返回 null 表示"用户没设置过"。
  * 超过 maxItems 的尾部丢弃，防止 settings.json 无限膨胀。
+ * view：上次使用的视图（'day'|'week'|'month'，2026-09-17 三视图升级起持久化）。
  */
 function normalizePlanner(raw) {
   if (!raw || typeof raw !== 'object') return null;
@@ -94,7 +98,7 @@ function normalizePlanner(raw) {
       if (items.length >= CFG.planner.maxItems) break;
     }
   }
-  return { items };
+  return { items, view: VIEWS.includes(raw.view) ? raw.view : 'day' };
 }
 
 /** 排序：有时间的在前（按时间升序），无时间的按创建顺序（按 id 稳定）。 */
@@ -144,12 +148,61 @@ function dayLabel(key, todayKey) {
   return `${Number(key.slice(5, 7))}/${Number(key.slice(8, 10))}`;
 }
 
+/**
+ * 月历矩阵（2026-09-17 月视图）：给定年月，返回从"该月第一格"起的 42 个日期键
+ * （6 行 × 7 列，前后用相邻月份补齐），起点按 weekStart 对齐。
+ * year 年份、month 1~12；非法输入返回 []。
+ */
+function monthGrid(year, month, weekStart = 1) {
+  const y = Math.round(Number(year));
+  const m = Math.round(Number(month));
+  if (!Number.isFinite(y) || !Number.isFinite(m) || m < 1 || m > 12) return [];
+  const first = dateKey(new Date(y, m - 1, 1));
+  const firstCell = startOfWeek(first, weekStart);
+  if (!firstCell) return [];
+  const out = [];
+  for (let i = 0; i < 42; i++) out.push(addDays(firstCell, i));
+  return out;
+}
+
+/** key 是否落在 [year, month]（month 1~12）：月历区分"本月/邻月"灰显用。 */
+function inMonth(key, year, month) {
+  if (!parseDateKey(key)) return false;
+  return Number(key.slice(0, 4)) === year && Number(key.slice(5, 7)) === month;
+}
+
+/**
+ * 周课表时间轴范围（2026-09-17 周视图）：取本周带时间的计划的 [最早小时, 最晚小时+1)，
+ * 并夹进 [0, 24]；一周没排任何带时间的计划 → 返回默认 8~22。
+ * 保证所有事件都落在轴内（min 再往下放宽到默认起点、max 顶到最晚事件结束）。
+ */
+function hourRange(items, keys, defStart = 8, defEnd = 22) {
+  let min = Infinity;
+  let max = -Infinity;
+  for (const it of items || []) {
+    if (!it || !it.time || !keys.includes(it.date)) continue;
+    const h = Number(it.time.slice(0, 2));
+    if (!Number.isFinite(h) || h < 0 || h > 23) continue;
+    min = Math.min(min, h);
+    max = Math.max(max, h);
+  }
+  if (min === Infinity) return [defStart, defEnd];
+  return [
+    Math.max(0, Math.min(defStart, min)),
+    Math.min(24, Math.max(defEnd, max + 1)),
+  ];
+}
+
 module.exports = {
+  VIEWS,
   dateKey,
   parseDateKey,
   addDays,
   startOfWeek,
   weekKeys,
+  monthGrid,
+  inMonth,
+  hourRange,
   normalizeTime,
   normalizeItem,
   normalizePlanner,

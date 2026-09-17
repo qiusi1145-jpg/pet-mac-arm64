@@ -7,67 +7,185 @@
     content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:"
   />
   <title>学习计划表</title>
-  <link rel="stylesheet" href="./tokens.css" />
   <style>
-    html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
-      font: 13px/1.6 "Microsoft YaHei", sans-serif; user-select: none; -webkit-user-select: none; }
-    body { position: relative; display: flex; flex-direction: column; box-sizing: border-box;
-      padding: 12px 14px 10px; overflow: hidden; }
-    /* 桌宠装饰层：主图缩小后贴在右下角，纯装饰（不吃鼠标事件） */
-    #deco { position: absolute; bottom: 0; right: 6px; z-index: 0;
+    /* ================= 设计语言：照搬学英语（english.css）的明亮浅色方案 =================
+     * 近白浅渐变背景 + 磨砂玻璃卡片 + 大圆角（9/13/19/999）+ 苹果系字体栈。
+     * 变量名与 english.css 同契约；当前固定 aurora（极光浅色）一组色值，
+     * 后续要接主题切换时把 [data-theme] 变量组搬进来即可。 */
+    :root {
+      --r-sm: 9px; --r-md: 13px; --r-lg: 19px; --r-pill: 999px;
+      --blur: 22px;
+      --shadow: 0 8px 28px rgba(31, 38, 72, 0.10);
+      --shadow-soft: 0 2px 10px rgba(31, 38, 72, 0.07);
+      --ok: #3fa06c;      --ok-bg: rgba(63, 160, 108, 0.14);
+      --warn: #c88a2e;    --warn-bg: rgba(200, 138, 46, 0.16);
+      --bad: #d95c53;     --bad-bg: rgba(217, 92, 83, 0.12);
+      --g1: #dfe6fd; --g2: #ece4fb; --g3: #d8f0fc;
+      --glass: rgba(255, 255, 255, 0.72);
+      --glass-strong: rgba(255, 255, 255, 0.90);
+      --brd: rgba(43, 49, 55, 0.12);
+      --text: #2b3137;
+      --text-dim: rgba(43, 49, 55, 0.55);
+      --accent: #6b7fd7;
+      --accent-2: #9678d9;
+      --on-accent: #ffffff;
+      --chip: rgba(255, 255, 255, 0.60);
+      --chip-on: rgba(255, 255, 255, 0.95);
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; overflow: hidden; }
+    body {
+      position: relative; display: flex; flex-direction: column;
+      background: linear-gradient(160deg, var(--g1) 0%, var(--g2) 52%, var(--g3) 100%) fixed;
+      color: var(--text);
+      font: 13.5px/1.65 -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      user-select: none; -webkit-user-select: none;
+    }
+    /* 桌宠装饰层：主图缩小贴右下角，纯装饰（不吃鼠标事件） */
+    #deco { position: absolute; bottom: 0; right: 6px; z-index: 1;
       pointer-events: none; user-select: none; -webkit-user-drag: none;
-      filter: drop-shadow(0 3px 6px rgba(0,0,0,.10)); }
+      filter: drop-shadow(0 3px 6px rgba(31, 38, 72, 0.12)); }
     #deco.left { right: auto; left: 6px; }
-    header, .week, #addRow, main, footer { position: relative; z-index: 1; }
-    header { display: flex; align-items: baseline; gap: 10px; }
-    header h1 { font-size: 15px; margin: 0; }
-    header .tip { color: var(--text-3); font-size: 12px; flex: 1 1 auto; }
-    header .prog { color: var(--ok); font-size: 12px; font-weight: 700; }
-    .week { display: flex; gap: 5px; margin: 9px 0 8px; }
-    .day { flex: 1 1 0; min-width: 0; border: 1px solid var(--hairline); border-radius: var(--r-md);
-      background: var(--card); padding: 5px 4px 6px; text-align: center; cursor: pointer; }
-    .day:hover { background: var(--hover-tint); border-color: #c9def2; }
-    .day .dw { font-size: 11px; color: var(--text-3); }
+    header, #addRow, .view, footer { position: relative; z-index: 2; }
+
+    /* ================= 顶栏：品牌 + 视图切换 + 进度 ================= */
+    header { display: flex; align-items: center; gap: 10px; padding: 12px 14px 6px; }
+    .brand { display: flex; align-items: center; gap: 6px; font-weight: 800; font-size: 15px; letter-spacing: 0.5px; }
+    .brand .logo { font-size: 17px; }
+    #tip { color: var(--text-dim); font-size: 12px; flex: 1 1 auto; min-width: 0;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #prog { color: var(--ok); font-size: 12px; font-weight: 700; flex: 0 0 auto; }
+    .tabs { display: flex; gap: 4px; flex: 0 0 auto; }
+    .tabs button {
+      border: 1px solid var(--brd); cursor: pointer; background: var(--chip); color: var(--text);
+      border-radius: var(--r-pill); padding: 3px 13px; font-size: 12px; font-weight: 600;
+      font-family: inherit; transition: background 0.15s, transform 0.1s;
+    }
+    .tabs button:hover { background: var(--chip-on); }
+    .tabs button:active { transform: scale(0.94); }
+    .tabs button.on { background: var(--chip-on); box-shadow: var(--shadow-soft);
+      border-color: var(--accent); color: var(--accent); }
+
+    /* ================= 添加行（三视图共用） ================= */
+    #addRow { display: flex; gap: 6px; align-items: center; margin: 6px 14px 0;
+      padding: 8px 9px; border: 1px solid var(--brd); border-radius: var(--r-md);
+      background: var(--glass); backdrop-filter: blur(var(--blur)); -webkit-backdrop-filter: blur(var(--blur));
+      box-shadow: var(--shadow-soft); }
+    input[type=text], input[type=date], input[type=time] {
+      font: 13px/1.6 -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      color: var(--text); padding: 3px 8px; border: 1px solid var(--brd);
+      border-radius: var(--r-sm); background: var(--glass-strong); outline: none;
+    }
+    input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(107, 127, 215, 0.18); }
+    button { font: 12px/1.6 -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      padding: 3px 12px; border-radius: var(--r-pill); border: 1px solid var(--brd);
+      background: var(--chip); color: var(--text); cursor: pointer; }
+    button:hover { background: var(--chip-on); }
+    button.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 700; }
+    button.primary:hover { opacity: 0.92; }
+
+    /* ================= 视图容器 ================= */
+    .view { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; margin: 8px 14px 0; }
+    .view[hidden] { display: none; }
+    .scroll { flex: 1 1 auto; overflow: auto; min-height: 0; padding-right: 96px; }
+    .sec { color: var(--text-dim); font-size: 11px; margin: 10px 0 5px; }
+    .empty { color: var(--text-dim); text-align: center; padding: 22px 0; }
+    .glass { border: 1px solid var(--brd); border-radius: var(--r-md); background: var(--glass);
+      backdrop-filter: blur(var(--blur)); -webkit-backdrop-filter: blur(var(--blur));
+      box-shadow: var(--shadow-soft); }
+
+    /* ---- 日视图：周选择条 + 清单（沿用原有交互，换磨砂皮） ---- */
+    .week { display: flex; gap: 6px; margin-bottom: 8px; }
+    .day { flex: 1 1 0; min-width: 0; border: 1px solid var(--brd); border-radius: var(--r-md);
+      background: var(--glass); backdrop-filter: blur(var(--blur)); -webkit-backdrop-filter: blur(var(--blur));
+      padding: 5px 4px 6px; text-align: center; cursor: pointer; transition: background 0.15s; }
+    .day:hover { background: var(--chip-on); }
+    .day .dw { font-size: 11px; color: var(--text-dim); }
     .day .dd { font-size: 13px; font-weight: 700; }
     .day .dot { font-size: 10px; color: var(--ok); min-height: 12px; }
-    .day.sel { background: var(--accent-weak); border-color: var(--accent); }
+    .day.sel { background: var(--chip-on); border-color: var(--accent); box-shadow: var(--shadow-soft); }
     .day.today .dd { color: var(--accent); }
-    #addRow { display: flex; gap: 6px; align-items: center; padding: 8px;
-      border: 1px solid var(--card-border); border-radius: var(--r-md); background: var(--card); }
-    #addRow input[type=text] { flex: 1 1 auto; min-width: 0; }
-    input[type=text], input[type=date], input[type=time] { font: 13px/1.6 "Microsoft YaHei"; color: var(--text);
-      padding: 3px 7px; border: 1px solid var(--input-border); border-radius: var(--r-sm); background: var(--card); }
-    main { flex: 1 1 auto; overflow: auto; margin-top: 9px; padding-right: 96px; }
-    .row { display: flex; align-items: center; gap: 8px; padding: 6px 9px;
-      border: 1px solid var(--hairline); border-radius: var(--r-md); background: var(--card); margin-bottom: 6px; }
+    .row { display: flex; align-items: center; gap: 8px; padding: 6px 9px; margin-bottom: 6px;
+      border: 1px solid var(--brd); border-radius: var(--r-md); background: var(--glass);
+      backdrop-filter: blur(var(--blur)); -webkit-backdrop-filter: blur(var(--blur));
+      box-shadow: var(--shadow-soft); }
     .row .ck { flex: 0 0 auto; }
-    .row .tm { flex: 0 0 46px; color: var(--accent-strong); font-size: 12px; }
+    .row .tm { flex: 0 0 46px; color: var(--accent); font-size: 12px; font-weight: 600; }
     .row .tx { flex: 1 1 auto; word-break: break-all; }
-    .row.done .tx { color: var(--text-3); text-decoration: line-through; }
+    .row.done .tx { color: var(--text-dim); text-decoration: line-through; }
     .row.overdue .tm { color: var(--bad); }
-    .row .delBtn { flex: 0 0 auto; border: none; background: none; color: var(--text-3); font-size: 13px; }
+    .row .delBtn { flex: 0 0 auto; border: none; background: none; color: var(--text-dim); font-size: 13px; }
     .row .delBtn:hover { color: var(--bad); }
-    .sec { color: var(--text-3); font-size: 11px; margin: 10px 0 5px; }
-    .empty { color: var(--text-3); text-align: center; padding: 22px 0; }
-    footer { display: flex; align-items: center; gap: 8px; padding-top: 8px; border-top: 1px solid var(--hairline); }
+
+    /* ---- 周视图：课表时间网格 ---- */
+    .wgrid { display: flex; border: 1px solid var(--brd); border-radius: var(--r-md);
+      background: var(--glass); backdrop-filter: blur(var(--blur)); -webkit-backdrop-filter: blur(var(--blur));
+      box-shadow: var(--shadow-soft); overflow: hidden; }
+    .wgutter { flex: 0 0 42px; }
+    .wcol { flex: 1 1 0; min-width: 0; border-left: 1px solid var(--brd); }
+    .wcol.head { flex: 0 0 42px; border-left: none; }
+    .whead { text-align: center; padding: 4px 0; font-size: 11px; color: var(--text-dim);
+      border-bottom: 1px solid var(--brd); cursor: pointer; }
+    .whead .n { font-weight: 700; font-size: 12px; color: var(--text); }
+    .whead.sel { color: var(--accent); }
+    .whead.sel .n, .whead.today .n { color: var(--accent); }
+    .whour { height: 46px; border-top: 1px solid rgba(43, 49, 55, 0.06); position: relative; }
+    .wcol.head .whour { border-top: none; }
+    .whour .hl { position: absolute; top: -7px; right: 5px; font-size: 10px; color: var(--text-dim); }
+    .wslot { min-height: 46px; border-top: 1px solid rgba(43, 49, 55, 0.06); padding: 2px 3px; }
+    .wslot.drop { background: rgba(107, 127, 215, 0.10); }
+    .wevt { position: relative; border: 1px solid var(--brd); border-left: 3px solid var(--accent);
+      border-radius: var(--r-sm); background: var(--glass-strong); padding: 2px 16px 2px 6px;
+      margin-bottom: 3px; cursor: pointer; overflow: hidden; }
+    .wevt .t { font-size: 10px; color: var(--accent); font-weight: 700; }
+    .wevt .x { font-size: 11px; word-break: break-all; line-height: 1.35; }
+    .wevt.done { opacity: 0.55; }
+    .wevt.done .x { text-decoration: line-through; color: var(--text-dim); }
+    .wevt.overdue { border-left-color: var(--bad); }
+    .wevt.overdue .t { color: var(--bad); }
+    .wevt .delBtn { position: absolute; top: 1px; right: 3px; border: none; background: none;
+      color: var(--text-dim); font-size: 11px; padding: 0 2px; }
+    .wevt .delBtn:hover { color: var(--bad); }
+
+    /* ---- 月视图：月历 + 事件列表 ---- */
+    .mnav { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+    .mnav .mt { font-weight: 800; font-size: 14px; flex: 1 1 auto; text-align: center; }
+    .mnav button { width: 30px; height: 26px; padding: 0; border-radius: var(--r-sm); }
+    .mgrid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px;
+      border: 1px solid var(--brd); border-radius: var(--r-md); background: var(--glass);
+      backdrop-filter: blur(var(--blur)); -webkit-backdrop-filter: blur(var(--blur));
+      box-shadow: var(--shadow-soft); padding: 6px; }
+    .mh { text-align: center; font-size: 11px; color: var(--text-dim); padding: 2px 0; }
+    .mcell { min-height: 44px; border-radius: var(--r-sm); border: 1px solid transparent;
+      padding: 2px 4px; cursor: pointer; position: relative; transition: background 0.12s; }
+    .mcell:hover { background: var(--chip-on); }
+    .mcell .n { font-size: 12px; font-weight: 700; }
+    .mcell.dim .n { color: var(--text-dim); font-weight: 400; }
+    .mcell.today { border-color: var(--accent); }
+    .mcell.sel { background: var(--chip-on); border-color: var(--accent); box-shadow: var(--shadow-soft); }
+    .mcell .cnt { position: absolute; top: 2px; right: 4px; font-size: 9px; color: var(--accent);
+      background: var(--chip-on); border-radius: var(--r-pill); padding: 0 5px; border: 1px solid var(--brd); }
+    .mcell .dots { position: absolute; left: 4px; bottom: 3px; display: flex; gap: 2px; }
+    .mcell .dots i { width: 5px; height: 5px; border-radius: 50%; background: var(--accent-2); display: block; }
+    .mcell.alldone .dots i { background: var(--ok); }
+
+    footer { display: flex; align-items: center; gap: 8px; padding: 8px 14px 10px; }
     footer .msg { flex: 1 1 auto; color: var(--ok); font-size: 12px; min-height: 18px; }
     footer .msg.err { color: var(--bad); }
-    button { font: 12px/1.6 "Microsoft YaHei"; padding: 3px 12px; border-radius: var(--r-sm);
-      border: 1px solid var(--btn-border); background: var(--btn-bg); color: var(--text); cursor: pointer; }
-    button:hover { background: var(--accent-weak); }
-    button.primary { background: var(--accent); border-color: var(--accent-strong); color: var(--on-accent); font-weight: 700; }
-    button.primary:hover { background: var(--accent-strong); }
   </style>
 </head>
 <body>
   <img id="deco" alt="" draggable="false" />
   <header>
-    <h1>学习计划表</h1>
-    <span class="tip" id="tip"></span>
-    <span class="prog" id="prog"></span>
+    <span class="brand"><span class="logo">📅</span>学习计划表</span>
+    <span id="tip"></span>
+    <span id="prog"></span>
+    <span class="tabs">
+      <button id="tabDay" class="on">日</button>
+      <button id="tabWeek">周</button>
+      <button id="tabMonth">月</button>
+    </span>
   </header>
-
-  <div class="week" id="week"></div>
 
   <section id="addRow">
     <input id="text" type="text" maxlength="200" placeholder="要做什么，例如：背 50 个单词" spellcheck="false" />
@@ -76,7 +194,33 @@
     <button id="addBtn" class="primary">添加</button>
   </section>
 
-  <main id="list"></main>
+  <!-- 日视图：周选择条 + 当天清单（原有设计） -->
+  <div class="view" id="viewDay">
+    <div class="week" id="week"></div>
+    <main class="scroll" id="list"></main>
+  </div>
+
+  <!-- 周视图：课表时间网格（本周实际计划按 时间×日期 摆放） -->
+  <div class="view" id="viewWeek" hidden>
+    <main class="scroll" id="weekWrap">
+      <div class="wgrid" id="wgrid"></div>
+      <div id="weekExtra"></div>
+    </main>
+  </div>
+
+  <!-- 月视图：月历 + 选中日事件 -->
+  <div class="view" id="viewMonth" hidden>
+    <div class="mnav">
+      <button id="mPrev" title="上个月">‹</button>
+      <span class="mt" id="mTitle"></span>
+      <button id="mNext" title="下个月">›</button>
+      <button id="mToday" title="回到本月" style="width:auto;padding:0 10px;">本月</button>
+    </div>
+    <main class="scroll">
+      <div class="mgrid" id="mgrid"></div>
+      <div id="mEvents"></div>
+    </main>
+  </div>
 
   <footer>
     <span class="msg" id="msg"></span>
