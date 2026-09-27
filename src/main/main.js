@@ -468,7 +468,7 @@ class PetApp {
       petMaxDim: CFG.image.petMaxDim,
       settings: this.store.get(),
       // 宠物主图解析结果（优先级：素材根目录 pet.png > settings 旧值 > 内置主图；
-      // 内置主图即交付的正式宠物，不再有“占位提示”概念）
+      // 内置主图是 npm run assets:gen 画的火柴人占位图，但照常渲染、不再有“占位提示”条）
       petPath: this.resolvePetPath(),
     }));
 

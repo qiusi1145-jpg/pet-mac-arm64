@@ -2,7 +2,7 @@
 /** 生成测试夹具 PNG（圆、双矩形、全透明、实心宠物样本）。 */
 const fs = require('fs');
 const path = require('path');
-const { encodePng } = require('./png');
+const { encodePng } = require('../../src/shared/png');
 const { circle, twoRects, blank } = require('./shapes');
 
 function write(name, bm) {

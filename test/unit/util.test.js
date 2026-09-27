@@ -2,7 +2,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { stripPngColorChunks } = require('../../src/shared/util');
-const { encodePng, decodePng } = require('../fixtures/png');
+const { encodePng, decodePng } = require('../../src/shared/png');
 const { circle } = require('../fixtures/shapes');
 
 /** 手工拼一个带指定辅助块的 PNG Buffer（chunk = 4B长度 + 4B类型 + 数据 + 4B CRC）。 */

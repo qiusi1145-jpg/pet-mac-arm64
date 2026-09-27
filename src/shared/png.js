@@ -1,8 +1,10 @@
 'use strict';
 /**
- * 测试用迷你 PNG 编解码器（纯 Node + zlib，无第三方依赖）。
- * 只支持 8bit RGBA 非隔行 PNG，足够为像素命中/形状测试生成夹具。
- * decodePng -> 我们约定的 {width,height,data(RGBA)} 位图格式。
+ * 迷你 PNG 编解码器（纯 Node + zlib，无第三方依赖），8bit RGBA 非隔行。
+ * 位图格式与 geom.js 约定一致：{ width, height, data(RGBA 每像素 4 字节) }。
+ * 共用方：测试夹具生成（test/fixtures）、内置素材生成器（tools/gen-assets.js）、
+ * 以及读回素材做像素断言的单测。只写 IHDR/IDAT/IEND —— 刻意不带 gAMA/iCCP/cHRM/sRGB，
+ * 避免浏览器按内嵌色彩档案单独调色导致同像素不同色（见 util.js stripPngColorChunks）。
  */
 const zlib = require('zlib');
 

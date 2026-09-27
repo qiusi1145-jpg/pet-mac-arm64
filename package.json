@@ -11,6 +11,7 @@
     "test:smoke": "node test/smoke/smoke.js",
     "test:ui": "node test/ui/ui.test.js",
     "gen:fixtures": "node test/fixtures/gen.js",
+    "assets:gen": "node tools/gen-assets.js",
     "voice:fetch": "node tools/fetch-voice-model.js",
     "voice:spike": "node tools/spike-sherpa.js",
     "voice:spike:electron": "electron tools/spike-sherpa.js",

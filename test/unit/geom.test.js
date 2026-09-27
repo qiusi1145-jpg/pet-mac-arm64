@@ -8,7 +8,7 @@ const {
   analyzeBitmap, hitTestPixel, scalePlan, makeBitmap, paintRect,
   defaultRegionSettings, computeRegion,
 } = require('../../src/shared/geom');
-const { decodePng } = require('../fixtures/png');
+const { decodePng } = require('../../src/shared/png');
 const { circle, twoRects, blank } = require('../fixtures/shapes');
 
 const FIX = (n) => path.join(__dirname, '..', 'fixtures', n);

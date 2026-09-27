@@ -556,7 +556,10 @@ function toggleStateVisual() {
  * 并以状态标志做严格互斥（特效优先）：任何一方挂起/播放中，另一方不起播。 */
 
 function canStartOverlay() {
-  return !!app.pet && !app.stateVisual.visible && !app.paused && !overlayBusy();
+  // 休息（睡觉时透明度正弦闪烁）期间不起播：眨眼/特效帧是整幅不透明的"换一具身体"，
+  // 会把睡颜的半透明顶掉 150ms（视觉上=睡着的人突然闪一下又不透明了）。
+  return !!app.pet && !app.stateVisual.visible && !app.paused && !overlayBusy() &&
+    !(app.rest && app.rest.active);
 }
 
 /** 呼吸零点（tickAnimations 检测到主波符号翻转时调用）。 */
@@ -568,10 +571,9 @@ function onBreathZero() {
     startEffectPlayback();
     return;
   }
-  /* ============【暂时注释】眨眼功能暂时关闭（2026-09-10）============
-   * 只是暂时注释掉“自动眨眼的触发”，恢复眨眼时把下面整块取消注释即可。
-   * 播放机制（playOverlayFrames / blinkBody / 多帧 blinkAnim）、测试钩子
-   * （playBlinkAnim / forceBlink）与 UI 场景全部原样保留，取消注释即完全恢复。
+  /* 眨眼自动触发曾于 2026-09-10 暂时注释关闭，2026-09-27 按用户"怎么没见它眨眼"恢复。
+   * 播放机制（playOverlayFrames / blinkBody / 多帧 blinkAnim）与测试钩子
+   * （playBlinkAnim / forceBlink）从未动过。 */
   if (!canStartOverlay()) return;
   const multi = app.blinkAnim.frames.length > 0;
   const chance = multi ? app.blinkAnim.probability : CFG.blink.zeroChance;
@@ -580,7 +582,6 @@ function onBreathZero() {
   if (!frames.length) return;
   app.blink.playing = true;
   playOverlayFrames(frames, () => { app.blink.playing = false; });
-   * ============【暂时注释结束】============ */
 }
 
 /** 随机特效动画：每次播完/跳过后在 min~max 间隔随机“再试”。 */

@@ -133,8 +133,20 @@ const scenarios = {
       return { started, playingMid: mid.blinkPlaying, bodyHidden, blinkShown,
         done: !end.blinkPlaying, bodyBack, blinkHidden };
     })()`);
-    return seq && seq.started === true && seq.playingMid === true && seq.bodyHidden === true &&
-      seq.blinkShown === true && seq.done === true && seq.bodyBack === true && seq.blinkHidden === true;
+    if (!(seq && seq.started === true && seq.playingMid === true && seq.bodyHidden === true &&
+      seq.blinkShown === true && seq.done === true && seq.bodyBack === true && seq.blinkHidden === true)) return false;
+
+    // 自动触发链路（呼吸零点 → zeroChance 掷骰 → 播 blinkBody）：这段 2026-09-10 起被注释关闭过，
+    // 期间没有任何测试变红 —— 所以这里必须真的等到一次"没人调用"的眨眼，而不是只测播放机制。
+    const auto = await js(`(async () => {
+      const T = window.__petTest;
+      for (let i = 0; i < 300; i++) {   // 12s：呼吸周期 4.2s（≈每 2.1s 一个零点）× 90% 概率，等不到就是真没接上
+        if (T.state().blinkPlaying) return { ok: true };
+        await new Promise((r2) => setTimeout(r2, 40));
+      }
+      return { ok: false };
+    })()`);
+    return auto && auto.ok === true;
   },
 
   /** 眨眼动画（多帧）：依次播放两帧、帧间切换 src、播完恢复常态。 */
@@ -509,13 +521,13 @@ const scenarios = {
     //   只有真正进入对话（decoding，被唤醒/按键说话）才出现反馈。
     ctx.voiceBroadcast('voice:state', { state: 'listening', rms: 0.2 });
     await sleep(150);
-    live = await execIn('chatWin', liveExpr);
+    let live = await execIn('chatWin', liveExpr);
     results.push({ name: '聊天窗：被动等待唤醒时不显示输入条', ok: live.hidden === true });
     results.push({ name: '宠物：被动等待唤醒时不显示"在听"指示', ok: (await js('window.__petState().voiceIndicatorOn')) === false });
 
     ctx.voiceBroadcast('voice:state', { state: 'decoding', rms: 0.3 });
     await sleep(150);
-    let live = await execIn('chatWin', liveExpr);
+    live = await execIn('chatWin', liveExpr);
     results.push({ name: `聊天窗：说话时出现"正在输入"条(${live.txt})`, ok: live.hidden === false && live.txt.includes('正在识别') });
     results.push({ name: `聊天窗：电平条随音量走(${live.bar})`, ok: parseFloat(live.bar) > 0 });
     results.push({ name: '宠物：进入对话（被唤醒/按键）时显示"在听"指示', ok: (await js('window.__petState().voiceIndicatorOn')) === true });
@@ -532,12 +544,12 @@ const scenarios = {
       const v = document.getElementById('voice');
       const show = b.classList.contains('show');
       const on = v.classList.contains('on');
-      if (!show || !on) return { ready: false, show, on };
       const rb = b.getBoundingClientRect();
       const rv = v.getBoundingClientRect();
       const dy = Math.min(rb.bottom, rv.bottom) - Math.max(rb.top, rv.top);
       const dx = Math.min(rb.right, rv.right) - Math.max(rb.left, rv.left);
-      return { ready: true, overlap: (dy > 0 && dx > 0) ? Math.round(dy) : 0,
+      // 矩形无条件返回：语音条收起后仍要能量气泡落回的位置（ready 只表示气泡在显示）
+      return { ready: show, on, overlap: (show && on && dy > 0 && dx > 0) ? Math.round(dy) : 0,
                b: [Math.round(rb.top), Math.round(rb.bottom)],
                v: [Math.round(rv.top), Math.round(rv.bottom)] };
     })()`;
@@ -546,7 +558,7 @@ const scenarios = {
     const nvOn = await js(overlapExpr);
     results.push({
       name: `宠物：语音条与气泡不重叠(气泡 ${(nvOn.b || []).join('..')} / 语音条 ${(nvOn.v || []).join('..')})`,
-      ok: nvOn.ready === true && nvOn.overlap === 0 && nvOn.b[1] < nvOn.v[0],
+      ok: nvOn.ready === true && nvOn.on === true && nvOn.overlap === 0 && nvOn.b[1] < nvOn.v[0],
     });
     const bubbleTopWhenVoiceOn = nvOn.ready ? nvOn.b[0] : 0;
 

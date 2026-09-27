@@ -15,11 +15,12 @@
 纯 Electron；唯一原生依赖是 **`sherpa-onnx-node`**（语音识别用，Node-API 免 `electron-rebuild`，
 不装也不影响其它功能）；「枚举其它窗口/写窗口样式」仍走系统 .NET 的 csc.exe 现编译的 C# 小程序。
 
-> 本文档 = **当前状态 + 使用 + 调参 + 测试**的权威入口；**换素材只看《素材替换指南.md》**（人/AI 两用）；
+> 本文档 = **当前状态 + 使用 + 调参 + 测试**的权威入口；**换素材只看本文「换图即定制（素材）」一节**（人/AI 两用）；
 > **改 UI 风格先读《UI风格统一指南.md》**（tokens.css 变量层 + 禁改区 + 四原则）。
 > 历史沿革、踩过的坑与 bug→修复明细见 **版本日志.md**（日志体，仅作背景）；bug 专项复盘见 **bug修炼手册.md**。
 > （2026-09-11 起文档收敛为这四份；2026-09-14 的语音调研设计稿已并入本文与版本日志后删除；
-> 2026-09-17 应用户要求新增第五份《UI风格统一指南.md》。）
+> 2026-09-17 应用户要求新增第五份《UI风格统一指南.md》；2026-09-27 素材收敛后《素材替换指南.md》并入本文，
+> 避免同一套路径两处维护、改一处漏一处。）
 
 ## 运行
 
@@ -115,13 +116,16 @@ npm run voice:diag         # 全链路诊断（开麦约 3 秒）：麦克风 / 
 - **BGM**：应用内选曲（mp3/wav/ogg/flac/m4a/aac）拷贝进 assets 自动开播（若未在播），面板可连续加；
   放完自动下一首、损坏文件 800ms 限频跳歌。启动加载列表但不自动播；隐藏暂停、恢复不续播。**无音量 UI**（默认
   `config.js audio.volumeDefault`=0.6）。
-- **眨眼**（**2026-09-10 起暂时关闭**：仅自动触发被注释，恢复方法见 `app.js` `onBreathZero` 的
-  【暂时注释】标记）：主循环逐帧检测**呼吸缩放偏移归零（符号翻转）**的零点，每个零点按
-  `config.js blink.zeroChance`（默认 90%）掷骰触发；**未配置多帧**则降级为单图 `src/assets/blink.png`
-  （替换同名文件生效，与主图同尺寸最贴合）显示 150ms；**配置了多帧**（`blinkAnim.frames`）则按序播帧
+- **眨眼**（2026-09-10~09-27 曾把自动触发注释关闭，现已恢复）：主循环逐帧检测**呼吸缩放偏移归零（符号翻转）**
+  的零点，每个零点按 `config.js blink.zeroChance`（默认 90%）掷骰触发；**未配置多帧**则降级为单图 `src/assets/blink.png`
+  （替换同名文件生效；内置占位图与主图同画布同脚底、只差眼睛开合，见「换图即定制（素材）」）显示 150ms；**配置了多帧**（`blinkAnim.frames`）则按序播帧
   （每帧各自 durationMs）。叠加层**跟随实时呼吸缩放**（图层切换尺度完全连续，不抖动）。
-  眨眼只属主形象：状态图形态不眨眼。
-- **随机特效动画**：素材 = `动画素材/动画1、动画2`（各三帧，`config.js effectAnim.groups` 可改）。
+  眨眼只属主形象：状态图形态不眨眼。呼吸幅度为 0（`anim.breatheAmplitude`）或暂停/拖动/飞行时没有零点 → 自然不眨。
+  **休息（睡觉）期间眨眼与特效都不起播**（`canStartOverlay` 排除 rest）：叠加帧是整幅不透明的"换一具身体"，
+  会把 25%↔75% 的睡颜闪烁顶掉一瞬。自动触发这条链路由 UI 场景 `blink` 兜底——它会真的等到一次"没人调用"的眨眼
+  （这段曾被关闭 17 天而没有任何测试变红，就是因为只测了播放机制）。
+- **随机特效动画**：素材 = `动画素材/动画1、动画2`（各三帧，`config.js effectAnim.groups` 可改；内置为火柴人
+  单手挥手 / 原地起跳各三帧，与主图同画布同脚底）。
   每次播完/跳过后在 **15~25s** 随机取间隔再试；到点挂起，等下一个**呼吸零点**起播（本体恰在未变形尺寸，
   图层切换无跳变）；播放时**整帧替换**本体（隐藏本体防双影）、跟随呼吸缩放、暂停透明度变化，播完恢复。
   **与眨眼互斥**（特效优先）；拖动/物理/手势/切形态/隐藏时跳过本轮。
@@ -451,11 +455,29 @@ VOICE_E2E_OK
 
 ## 换图即定制（素材）
 
-**换任何素材只看《素材替换指南.md》**（精确路径 + 规则，人/AI 都能照做）。速记：
+全部素材路径与规则都在这一节（人/AI 都能照做，不再有单独的替换指南）。速记：
 
 - 主图 = 替换 `data\assets\pet\pet.png`（重启生效）。查找顺序：素材根目录 pet.png → 旧 `settings.pet.path`（遗留字段，不生效）→ 内置主图 `src\assets\pet.png`。
-- 状态图 = `src\assets\state.png` 或 `config.js stateImage.path`；眨眼图 = `src\assets\blink.png`（**自动触发当前关闭**，恢复方法见指南 §3）；特效帧 = `动画素材\动画1、2` 或 `config.js effectAnim.groups`。
+- 状态图 = `src\assets\state.png` 或 `config.js stateImage.path`；眨眼图 = `src\assets\blink.png`（自动触发已在 2026-09-27 恢复，触发条件见「眨眼」条）；特效帧 = `动画素材\动画1、2` 或 `config.js effectAnim.groups`。
 - 应用内**不提供换宠入口**（素材根目录在选择器里被拒绝列出，防误改）；图片等比缩到 ≤220px、alpha≥20 算实体像素；PNG 自动无损剥离 ICC 色彩块；显示走 `<img>` 原图直通管线（高分屏不发糊），画布只做判定分析。
+- **换正式美术时的对齐契约**：主图/状态图/眨眼图请给同一张尺寸、同一脚底位置、同一中轴的图。
+  切形态按「图像底边中点」原地换装、眨眼与特效帧按「包围盒底边中点」插帧，尺寸或脚底不一致就会原地跳位；
+  眨眼图必须是"只差眼睛"的整身图（旧版 96×96 只画一条眼线 = 脚边浮一条黑线）。
+
+### 内置占位素材 = 火柴人（代码生成，别手改 PNG）
+
+2026-09-27 起，仓库里的 9 张内置素材全部换成**程序画出来的火柴人**（线条 + 一张笑脸）：
+主图/眨眼图/状态图/两组特效帧共用同一套端点坐标，只改姿势与眼睛开合。
+
+- 生成：`npm run assets:gen`（`tools/gen-assets.js`，纯 Node 无依赖，约 5 秒出 9 张，**重跑幂等**）。
+  产出提交进仓库，运行时不依赖该脚本；想调体型/姿势就改脚本里的端点坐标表重跑。
+- 统一规格：320×320 画布、脚底基线 y=300、中轴 x=160（短边 ≥256 供打包脚本切 exe 图标）；只写
+  IHDR/IDAT/IEND，天生无色彩档案块。9 张合计 48KB（旧素材 2.6MB）。
+- 姿势：主图站姿睁眼 · 眨眼图同姿势闭眼（两条下弯眼线）· 状态图双手举到头侧 · 动画1 单手挥手三帧 ·
+  动画2 屈膝蓄力 → 伸直上冲 → 落地三帧。姿势一律左右镜像（挥手的举臂不越过站姿手部横向范围），
+  否则包围盒中轴一偏，插帧瞬间人物会横移。
+- 守卫：`test/unit/assets.test.js` 逐张锁死上述契约（同画布、脚底/中轴对齐、无色彩块、四角全透明、
+  眨眼图与主图仅眼睛带内有像素差），素材一改就跑不掉的回归。
 
 ## 关键机制与边界（改代码前先读）
 
@@ -520,10 +542,11 @@ VOICE_E2E_OK
 三层自动化，命令与当前计数（改代码后以实际为准，改完同步本文件）：
 
 ```bash
-npm test            # L1 纯函数/引擎单测 + 主进程启动接线测试（node --test，零 Electron）—— 当前 276 例 / 15 文件
+npm test            # L1 纯函数/引擎单测 + 主进程启动接线测试（node --test，零 Electron）—— 当前 298 例 / 18 文件
 npm run test:smoke  # L2 真实启动冒烟（临时 userData + fixture 宠物；断言渲染 ready / 宠物解码 / 控制台零报错）
 npm run test:ui     # L3 真实渲染层 21 个 UI 场景（每个独立进程+独立临时 userData）
 PET_UI_ONLY='learn' npm run test:ui      # 调试：只跑指定场景
+npm run assets:gen  # 重新生成内置占位素材（火柴人 9 张，见「换图即定制（素材）」）
 npm run voice:spike # 语音自检（原生插件/关键类/模型加载），不建窗不碰鼠标，可随时跑
 npm run voice:e2e   # 语音**启动接线**自检：走真实启动路径等 asr:ready，打 VOICE_E2E_OK/FAIL（不进 UI 场景）
 npm run llm:e2e     # 大模型**端到端**自检：内置 mock 服务（不碰外网/不需真密钥），两阶段验密钥持久化
@@ -568,10 +591,10 @@ src/main/     main.js(PetApp 主进程) store.js(设置原子写盘) chatOrchest
               winenum.js(枚举/样式 C# exe) uiScenarios.js(UI 场景)
 src/renderer/ app.js(宠物主窗) index.html boot.js + todo.* chat.* chatSettings.* english.*
               pomodoro.* planner.* voiceSettings.*(七个独立窗口) + asr.html/asr.js/pcm-worklet.js(隐藏语音进程)
-src/assets/   pet.png(内置主宠) blink.png(闭眼图) state.png(状态图)
+src/assets/   内置占位素材（火柴人，npm run assets:gen 生成）：pet.png(主图) blink.png(闭眼图) state.png(状态图)
 动画素材/      动画1、动画2（各三帧，随机特效动画默认素材；config.js effectAnim.groups 可改）
-tools/        spike-sherpa.js(语音自检) fetch-voice-model.js(模型按需下载)
-test/         unit/(15 文件，含 voice-wiring.test.js 主进程启动接线测试) smoke/ ui/(21 场景) fixtures/
+tools/        gen-assets.js(占位素材生成器) spike-sherpa.js(语音自检) fetch-voice-model.js(模型按需下载)
+test/         unit/(18 文件，含 assets.test.js 素材一致性守卫、voice-wiring.test.js 主进程启动接线测试) smoke/ ui/(21 场景) fixtures/
 test/unit/voice-wiring.test.js  ← 用 electron 桩 boot 主进程，专抓"写好了但没接线"这类 bug
 data/         (运行时数据，gitignore：settings.json、assets/、winenum/、english/(词库+学习进度)、
               voice/models/(语音模型，约 160MB)、缓存)
@@ -587,7 +610,8 @@ data/         (运行时数据，gitignore：settings.json、assets/、winenum/�
   音乐加入后**真实出声**、切换/停止正常；背景贴地跟人、空中冻结、清除复原；切状态图换身体照常、原地换装；
   替换 `data\assets\pet\pet.png` 后重启生效、应用内无换宠入口。
 - **P1.5**：待办到点气泡、催促使劲度、聊天命中/未命中、规则持久化；替换 blink/state 占位图生效；
-  归零半透明与复原；拖动 1:1；抛掷不越界；吸附/跟随/脱落；物理开关关闭后不飞不坠但可吸附。
+  **站着时每几秒能看到一次自动眨眼（火柴人闭眼一瞬）、眨眼瞬间脚不挪人不缩**；休息（睡觉）期间不眨眼、
+  半透明不被打断；归零半透明与复原；拖动 1:1；抛掷不越界；吸附/跟随/脱落；物理开关关闭后不飞不坠但可吸附。
 - **P1.6 共存（遮挡根治回归）**：浏览器放 GIF/视频（含全屏）反复点击/拖动/抛丢桌宠 → 不动画冻结不黑屏；
   点桌宠不抢正在打字窗口的焦点；Alt-Tab 无桌宠；选择器路径框能打字/Esc 能关；桌宠被其它窗口完全盖住
   一段时间后仍点得动（遮挡禁用 + IPC 驱动判定双保险）。
