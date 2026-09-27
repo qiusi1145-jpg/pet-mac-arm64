@@ -30,16 +30,5 @@ function shouldPlayBlinkAnim(probability, rng = Math.random) {
   return rng() < p;
 }
 
-/**
- * 呼吸零点检测（眨眼/特效的起播门禁，纯函数）：
- * prevOff/curOff = 主呼吸波的缩放偏移（scale - 1），符号翻转 = 波形恰好经过未变形尺寸。
- * 任一为 0 不算翻转（呼吸幅度渐入期、暂停恢复瞬间不误触发）；非数一律 false。
- */
-function isBreathZeroCross(prevOff, curOff) {
-  if (!Number.isFinite(prevOff) || !Number.isFinite(curOff)) return false;
-  if (prevOff === 0 || curOff === 0) return false;
-  return prevOff > 0 !== curOff > 0;
-}
-
-module.exports = { normalizeBlinkFrames, shouldPlayBlinkAnim, isBreathZeroCross };
+module.exports = { normalizeBlinkFrames, shouldPlayBlinkAnim };
 

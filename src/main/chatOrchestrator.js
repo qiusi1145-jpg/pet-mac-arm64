@@ -33,7 +33,7 @@ class ChatOrchestrator {
       chatRules: st.chatRules || [],
       todos: (st.todos || []).map((t) => ({ text: t.text, due: t.due, done: !!t.done, important: !!t.important })),
       study: st.english || null,
-      form: this.app.stateVisualOn ? 'alt' : 'main',
+      form: this.app.visualMode,
       ...(extra && typeof extra === 'object' ? extra : {}),
     };
   }

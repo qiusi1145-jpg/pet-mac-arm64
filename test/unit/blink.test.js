@@ -2,12 +2,23 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { normalizeBlinkFrames, shouldPlayBlinkAnim, isBreathZeroCross } = require('../../src/shared/blink');
+const { normalizeBlinkFrames, shouldPlayBlinkAnim } = require('../../src/shared/blink');
 const { CFG } = require('../../src/shared/config');
 
-test('眨眼配置：零点触发概率与单图时长存在且合理', () => {
-  assert.ok(CFG.blink.zeroChance > 0 && CFG.blink.zeroChance <= 1, `zeroChance=${CFG.blink.zeroChance}`);
-  assert.ok(CFG.blink.zeroFrameMs >= 30 && CFG.blink.zeroFrameMs <= 1000, `zeroFrameMs=${CFG.blink.zeroFrameMs}`);
+test('眨眼配置：随机心跳间隔与单图时长存在且合理', () => {
+  const b = CFG.blink;
+  assert.ok(b.minIntervalMs > 0, `minIntervalMs=${b.minIntervalMs}`);
+  assert.ok(b.maxIntervalMs > b.minIntervalMs, `间隔区间反了：${b.minIntervalMs}~${b.maxIntervalMs}`);
+  assert.ok(b.frameMs >= 30 && b.frameMs <= 1000, `frameMs=${b.frameMs}`);
+});
+
+test('待机呼吸已整体删除（配置与纯函数都不该再回来）', () => {
+  assert.equal(CFG.anim.breatheAmplitude, undefined, 'CFG.anim.breatheAmplitude 仍在');
+  assert.equal(CFG.anim.breathePeriodMs, undefined, 'CFG.anim.breathePeriodMs 仍在');
+  assert.equal(CFG.blink.zeroChance, undefined, 'CFG.blink.zeroChance（呼吸零点概率）仍在');
+  assert.equal(CFG.blink.zeroFrameMs, undefined, 'CFG.blink.zeroFrameMs 仍在');
+  assert.equal(require('../../src/shared/motion').breathe, undefined, 'motion.breathe 仍在');
+  assert.equal(require('../../src/shared/blink').isBreathZeroCross, undefined, 'blink.isBreathZeroCross 仍在');
 });
 
 test('眨眼动画帧清洗：非法帧丢弃、时长夹取、缺省回退默认值', () => {
@@ -38,16 +49,4 @@ test('眨眼动画触发概率：0 永不播、1 必播、中间按 rng 掷骰',
   assert.equal(shouldPlayBlinkAnim(0.5, () => 0.49), true);
   assert.equal(shouldPlayBlinkAnim(0.5, () => 0.51), false);
   assert.equal(shouldPlayBlinkAnim('bad', () => 0.1), false); // 非法 → 不播
-});
-
-test('呼吸零点检测：偏移符号翻转 = 零点；0 / 非数不触发', () => {
-  assert.equal(isBreathZeroCross(-0.001, 0.001), true);
-  assert.equal(isBreathZeroCross(0.001, -0.001), true);
-  assert.equal(isBreathZeroCross(-0.5, -0.4), false);
-  assert.equal(isBreathZeroCross(0.5, 0.4), false);
-  assert.equal(isBreathZeroCross(0, 0.5), false);   // 渐入期/恢复瞬间不误触发
-  assert.equal(isBreathZeroCross(0.5, 0), false);
-  assert.equal(isBreathZeroCross(0, 0), false);
-  assert.equal(isBreathZeroCross(NaN, 0.5), false);
-  assert.equal(isBreathZeroCross(0.5, undefined), false);
 });

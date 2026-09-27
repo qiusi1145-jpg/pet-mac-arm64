@@ -152,9 +152,22 @@ function crossedMilestone(before, after, cfg = CFG.status) {
   return out;
 }
 
-/** 切换“状态图”可见性（双形态换身体只影响视觉，不影响任何状态数值或点击判定）。 */
-function nextStateVisual(visible) {
-  return !visible;
+/**
+ * 视觉形态枚举（换身体只影响显示，不影响任何状态数值或点击判定语义）：
+ *  main  = 主宠物图
+ *  state = 状态图
+ *  type  = 打字状态（三张图：打字两帧随按键交替 + 停手后的"不打字"图；见 shared/typing.js）
+ */
+const VISUAL_MODES = ['main', 'state', 'type'];
+
+function normalizeVisualMode(mode) {
+  return VISUAL_MODES.indexOf(mode) >= 0 ? mode : 'main';
+}
+
+/** 轮换下一形态：主 → 状态 → 打字 → 主（菜单是直达项，轮换供测试钩子使用）。 */
+function nextVisualMode(mode) {
+  const i = VISUAL_MODES.indexOf(normalizeVisualMode(mode));
+  return VISUAL_MODES[(i + 1) % VISUAL_MODES.length];
 }
 
 /** UI 汇总：取整后的数值 + 是否低状态（任一归零）+ 目标不透明度。 */
@@ -182,5 +195,7 @@ module.exports = {
   rollAffinity,
   crossedMilestone,
   deriveStatus,
-  nextStateVisual,
+  VISUAL_MODES,
+  normalizeVisualMode,
+  nextVisualMode,
 };

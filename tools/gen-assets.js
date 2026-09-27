@@ -2,10 +2,13 @@
 /**
  * 内置占位素材生成器：火柴人（线条 + 一张脸）。
  *
- * 覆盖全部内置素材，一套线条骨架出九张图：
+ * 覆盖全部内置素材，一套线条骨架出十二张图：
  *   src/assets/pet.png    主图   = 站姿 + 睁眼
  *   src/assets/blink.png  眨眼图 = 站姿 + 闭眼（与主图只差眼睛，身体逐像素相同）
  *   src/assets/state.png  状态图 = 双手举起
+ *   src/assets/type1.png  打字态图1 = 双手搭在"键盘"上（略低头）
+ *   src/assets/type2.png  打字态图2 = 右手抬起（每按一下键盘与图1 交替一次）
+ *   src/assets/type-idle.png 打字态图3 = 双手身前交叠（停手 1 秒后显示）
  *   动画素材/动画1/*      特效   = 单手挥手三帧
  *   动画素材/动画2/*      特效   = 原地起跳三帧（蓄力 → 伸直 → 落地）
  *
@@ -44,6 +47,8 @@ const distSeg = (x, y, ax, ay, bx, by) => {
 const ramp = (d) => (d <= -0.5 ? 1 : d >= 0.5 ? 0 : 0.5 - d); // 1px 过渡带
 /** 圆头端点的粗线段 = 火柴人的一节肢体。 */
 const stroke = (a, b) => (x, y) => ramp(distSeg(x, y, a[0], a[1], b[0], b[1]) - HW);
+/** 指定半宽的线段（"键盘"横线要比肢体细，否则像一根杠铃）。 */
+const strokeW = (a, b, hw) => (x, y) => ramp(distSeg(x, y, a[0], a[1], b[0], b[1]) - hw);
 /** 圆环 = 头。 */
 const ring = (c, r) => (x, y) => ramp(Math.abs(Math.hypot(x - c[0], y - c[1]) - r) - HW);
 /** 实心点 = 眼睛（与另两个基元同向：中心线内为负 → 不透明）。 */
@@ -75,6 +80,13 @@ const POSES = {
     { ...IDLE, armR: [[CX, 112], [206, 98], [188, 66]] },
     { ...IDLE, armR: [[CX, 112], [204, 96], [210, 72]] },
   ],
+  // 打字态三张图（形态三）：图1 双手搭在"键盘"横线上、图2 右手抬起（每按一下键盘两者交替）、
+  // 图3 双手身前交叠（停手 idleMs 后显示）。三张都刻意保持左右横向对称：包围盒中轴一偏，
+  // 换帧瞬间人物会横移；腿一律沿用 IDLE，脚底基线才逐张相同（换图原地不动）。kb:true = 画键盘横线。
+  type1: { ...IDLE, head: [CX, 68], neck: [CX, 96], armL: [[CX, 112], [130, 150], [142, 168]], kb: true },
+  type2: { ...IDLE, head: [CX, 68], neck: [CX, 96], armL: [[CX, 112], [130, 150], [142, 168]],
+    armR: [[CX, 112], [190, 150], [178, 136]], kb: true },
+  typeIdle: { ...IDLE, armL: [[CX, 112], [134, 152], [150, 174]] },
   // 起跳三帧：脚底基线不动，靠屈膝/伸直/低头表达蓄力-上冲-落地
   jump: [
     { ...IDLE, head: [CX, 74], neck: [CX, 104], hip: [CX, 206],
@@ -94,6 +106,8 @@ function figure(P) {
   const f = [ring(P.head, HEAD_R), stroke(P.neck, P.hip)];
   for (const a of [armL, armR]) f.push(stroke(a[0], a[1]), stroke(a[1], a[2]));
   for (const l of [legL, legR]) f.push(stroke(l[0], l[1]), stroke(l[1], l[2]));
+  // "键盘"横线：左右各伸出一点但关于中轴对称（不对称会让换帧时人物横移）
+  if (P.kb) f.push(strokeW([112, 176], [208, 176], 3));
   return f;
 }
 
@@ -138,6 +152,19 @@ const SHOTS = [
   { name: '眨眼图', file: path.join('src', 'assets', 'blink.png'), pose: POSES.idle, face: FACE.closed },
   { name: '状态图', file: path.join('src', 'assets', 'state.png'), pose: POSES.armsUp, face: FACE.open },
 ];
+// 形态三的三张图：路径直接取 config.typing（生成器 / assets.test.js 守卫 / 应用加载三方同源，
+// 不会各说各话）；"../" 相对 src/renderer，所以落到 src/assets/ 下。
+{
+  const poses = [POSES.type1, POSES.type2, POSES.typeIdle];
+  const files = (CFG.typing.frames || []).concat([CFG.typing.idleFrame]);
+  if (files.length !== poses.length) {
+    throw new Error(`config.typing 需要"2 张打字帧 + 1 张不打字图"，实际 ${files.length} 项`);
+  }
+  files.forEach((fp, i) => SHOTS.push({
+    name: i < 2 ? `打字态图${i + 1}` : '打字态·不打字图',
+    file: path.join(ROOT, 'src', 'renderer', fp), pose: poses[i], face: FACE.open,
+  }));
+}
 // 特效帧路径直接取 config.effectAnim.groups（"../" 相对 src/renderer）→ 生成器不会和应用加载路径走偏
 CFG.effectAnim.groups.forEach((g, gi) => {
   const poses = [POSES.wave, POSES.jump][gi];

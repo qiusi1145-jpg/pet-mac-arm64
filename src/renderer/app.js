@@ -9,7 +9,7 @@
  *  - 锁定态下无论如何穿透；托盘是解锁保底。
  *
  * 动画/物理与“判定区域”完全解耦：判定只用 pet.bitmap 原始像素；
- * 表现层用 CSS transform（缩放果冻/呼吸），动画变形不改变任何判定。
+ * 表现层只用 CSS transform 做 q 弹缩放（无待机呼吸），动画变形不改变任何判定。
  */
 const { ipcRenderer } = require('electron');
 const nodePath = require('path');
@@ -17,12 +17,15 @@ const { CFG } = require('../shared/config');
 const { clamp } = require('../shared/util');
 const { analyzeBitmap, hitTestPixel, scalePlan } = require('../shared/geom');
 const {
-  GestureTracker, springParams, integrateSpring, impulse, breathe,
+  GestureTracker, springParams, integrateSpring, impulse,
   step: physicsStep, atRest: physicsAtRest, chooseSnapTarget, shouldDetach, normCol,
 } = require('../shared/motion');
-const { normalizeBlinkFrames, shouldPlayBlinkAnim, isBreathZeroCross } = require('../shared/blink');
+const { normalizeBlinkFrames, shouldPlayBlinkAnim } = require('../shared/blink');
 const statusM = require('../shared/status');
-const { nextStateVisual } = statusM;
+const { normalizeVisualMode, nextVisualMode, VISUAL_MODES } = statusM;
+const {
+  TYPING_IDLE, typingCfg, createTypingMachine, onTypingBeat, onTypingIdleCheck,
+} = require('../shared/typing');
 
 const $ = (id) => document.getElementById(id);
 const worldEl = $('world'), petWrap = $('petWrap'), petEl = $('pet');
@@ -64,13 +67,10 @@ const app = {
   uiRects: [],         // 可交互 UI 矩形（状态胶囊、面板），参与 isInteractableAt 判定
   forceInteractive: false, // 弹层/菜单打开时强制整窗可交互（瞬态）
 
-  // ---- 动画 ----
+  // ---- 动画（只有 q 弹弹簧；待机不做任何缩放）----
   anim: {
     spr: { x: { s: 1, v: 0 }, y: { s: 1, v: 0 } }, // q 弹弹簧
     ringVisible: false,
-    breathT: 0,      // 呼吸波相位（ms）：只在待机时推进 → 拖动/飞行暂停（冻结时长 == 暂停时长）
-    ramp: 0,         // 呼吸幅度渐入 0..1：恢复待机后 0.5s 内从 0 爬回满幅（衔接连续不突跳）
-    breathSign: 0,   // 主呼吸波偏移符号（-1/0/1），符号翻转 = 呼吸零点（眨眼/特效起播门禁）
   },
 
   // ---- 手势 ----
@@ -111,16 +111,23 @@ const app = {
   // 应用内选择器（选背景/选音乐，绕开这台机器上失灵的原生文件对话框）
   petPickerOpen: false,
   bubbleTimer: null,
-  blink: { visible: false, endTimer: null, playing: false },
+  blink: { visible: false, endTimer: null, playing: false, timer: 0 }, // timer = 下一次眨眼心跳
   blinkBody: null, // 降级单图眨眼的“帧身体”（src/assets/blink.png 解码；null = 不可用）
-  stateVisual: { visible: false },  // 当前形态：false=主形象，true=状态形象
+  stateVisual: { mode: 'main' },  // 当前形态：main=主形象，state=状态形象，type=打字状态（三张图）
   mainBody: null,      // 主形象"身体"：解码位图/锚点/尺寸（当前 app.pet 指向活动身体）
   stateBody: null,     // 状态形象"身体"（预载 src/assets/state.png 或 config 覆盖；null = 切换不可用）
+  // ---- 打字状态（形态三：config.typing 的三张图 + 探针节拍） ----
+  typeBodies: [],      // 打字两帧身体（[0]=图1、[1]=图2，每按一下键盘交替一次）；不足 2 = 该形态不可用
+  typeIdleBody: null,  // "不打字"图（图3）身体：进入形态三的默认显示，也是停手 idleMs 后的显示
+  typing: {            // 帧机状态见 shared/typing.js（纯函数，单测锁死行为线）
+    machine: createTypingMachine(),
+    timer: 0,          // 停手判定定时器（到点跑 onTypingIdleCheck）
+    cfg: typingCfg(),  // { idleMs, minFlipMs }
+  },
   // ---- 随机特效动画（config.js effectAnim.groups：动画1/动画2 等，整帧替换的随机小动画） ----
   effectFx: {
     groups: [],     // [{ name, frames: [帧身体+durationMs] }]；frames 空 = 功能关闭
     timer: null,    // 15~25s 随机“再试”定时器
-    pending: false, // 已到点、挂起等下一个呼吸零点起播
     playing: false,
     rng: null,      // 组选择随机源（测试可注入）；null = Math.random
   },
@@ -256,8 +263,9 @@ async function loadPet(dataUrl) {
   petEl.style.transform = '';
   hintEl.style.display = 'none';
   app.anim.spr = { x: { s: 1, v: 0 }, y: { s: 1, v: 0 } };
-  // 载入主形象 = 回到主形态（换宠后吸附/抛掷状态复位）
-  app.stateVisual.visible = false;
+  // 载入主形象 = 回到主形态（换宠后吸附/抛掷状态复位；打字帧机一并复位）
+  app.stateVisual.mode = 'main';
+  stopTyping();
   app.phys = null;
   app.dragging = false;
   app.snap = null; ensureSnapPollStop();
@@ -277,29 +285,42 @@ function drawBody(body) {
 }
 
 /**
- * 预载状态形象（第二具身体）：内置 src/assets/state.png 或配置覆盖路径（dataUrl 解码）。
+ * 预载状态形象（第二具身体）：内置 src/assets/state.png 或配置覆盖路径。
  * 失败 → 状态切换不可用（保持主形态）；只在控制台 warn（不进错误计数）。
  */
 async function loadStateBody() {
   try {
-    const body = app.stateImagePath
-      ? await (async () => {
-          const img = await ipcRenderer.invoke('asset:readImage', app.stateImagePath);
-          if (!img) throw new Error('状态图读取失败');
-          return decodeImageDataUrl(img.dataUrl, CFG.image.petMaxDim);
-        })()
-      : await decodeImageSrc('../assets/state.png', CFG.image.petMaxDim);
-    app.stateBody = body;
+    app.stateBody = await decodeImageAnyPath(app.stateImagePath || '../assets/state.png');
   } catch (e) {
     app.stateBody = null;
-    if (app.stateVisual.visible && app.mainBody) { // 正显示状态形象但新身体不可用 → 退回主形态
-      app.stateVisual.visible = false;
-      app.pet = app.mainBody;
-      drawBody(app.pet);
-      syncPlacement();
-    }
+    if (app.stateVisual.mode === 'state') setVisualMode('main'); // 正显示它却加载失败 → 退回主形态
     console.warn('[pet] 状态形象加载失败（切换状态将不可用）', e && e.message ? e.message : e);
   }
+}
+
+/**
+ * 预载打字状态的三具身体（config.typing：两张打字帧 + 一张"不打字"图）。
+ * 半组残缺比没有更难看（连打时会闪缺一帧），所以任一帧失败就整组作废；
+ * 作废后 visualAvailable('type')=false → 菜单选了也回主形态，并在控制台说明原因。
+ */
+async function loadTypingBodies() {
+  const paths = (CFG.typing && CFG.typing.frames) || [];
+  const bodies = [];
+  for (const p of paths) {
+    try { bodies.push(await decodeImageAnyPath(p)); } catch (e) {
+      console.warn('[pet] 打字帧加载失败（打字状态不可用）', p, e && e.message ? e.message : e);
+      bodies.length = 0;
+      break;
+    }
+  }
+  app.typeBodies = bodies.slice(0, 2);
+  try {
+    app.typeIdleBody = await decodeImageAnyPath(CFG.typing.idleFrame);
+  } catch (e) {
+    app.typeIdleBody = null;
+    console.warn('[pet] "不打字"图加载失败（打字状态不可用）', e && e.message ? e.message : e);
+  }
+  if (app.stateVisual.mode === 'type' && !visualAvailable('type')) setVisualMode('main');
 }
 
 function syncPlacement() {
@@ -312,7 +333,7 @@ function syncPlacement() {
 
 function emit(kind, data) { for (const fn of app.bus) { try { fn(kind, data); } catch (e) { console.error(e); } } }
 
-/* ================= 动画（呼吸 / q 弹 / 爱心） ================= */
+/* ================= 动画（q 弹 / 爱心） ================= */
 
 function setScale(sx, sy) {
   const c = petEl.style;
@@ -435,8 +456,8 @@ function duckAudio(on) {
 }
 
 function setBlinkVisible(v) {
-  // 眨眼/特效帧属于“主宠物形象”：状态图形态下不显示
-  if (v && app.stateVisual.visible) v = false;
+  // 眨眼/特效帧属于”主宠物形象”：其它形态（状态图 / 打字状态）下不显示
+  if (v && app.stateVisual.mode !== 'main') v = false;
   app.blink.visible = !!v;
   if (blinkEl) blinkEl.style.display = app.blink.visible ? 'block' : 'none';
 }
@@ -444,24 +465,22 @@ function setBlinkVisible(v) {
 /* ================= 叠加帧（眨眼 / 随机特效动画：整帧“接管”本体显示） =================
  * 帧素材是“包含完整宠物的整图” → 从第一帧起隐藏本体、播完恢复（防双影）。
  * 红线不受影响：判定/物理始终用 app.pet 的真实身体位图，叠加只是显示层。
- * 叠加层每帧跟随实时呼吸缩放（不冻结为 1）：零点时刻 y 轴仍带相位滞后拉伸，
- * 跟随则两次图层切换尺度完全连续（否则可见“缩回-弹回”抖动）。 */
+ * 叠加层自身不做缩放：待机不再有呼吸形变，图层切换两侧都是原始尺度（q 弹进行中由
+ * canStartOverlay 挡掉，不会出现"本体被压扁、换上的帧却是圆的"）。 */
 
-/** 显示一帧：帧与本体按“碰撞盒底边中点”对齐（脚底原地不动），缩放原点 = 帧自己的锚点。
- *  注入的测试帧（只有 src/durationMs）回退为铺满本体 + 中心锚点（兼容旧拉伸显示）。 */
+/** 显示一帧：帧与本体按“碰撞盒底边中点”对齐（脚底原地不动）。
+ *  注入的测试帧（只有 src/durationMs）回退为铺满本体（兼容旧拉伸显示）。 */
 function showFrameBody(fb) {
   const p = app.pet;
   if (!p) return;
   const fw = fb.w || p.w, fh = fb.h || p.h;
   const fcol = fb.col || { ox: 0, oy: 0, w: fw, h: fh };
-  const fa = fb.anchor || { x: fw / 2, y: fh / 2 };
   const bx = p.col.ox + p.col.w / 2, by = p.col.oy + p.col.h;
   const fx = fcol.ox + fcol.w / 2, fy = fcol.oy + fcol.h;
   blinkEl.style.left = `${bx - fx}px`;
   blinkEl.style.top = `${by - fy}px`;
   blinkEl.style.width = `${fw}px`;
   blinkEl.style.height = `${fh}px`;
-  blinkEl.style.transformOrigin = `${fa.x}px ${fa.y}px`;
   blinkEl.src = fb.src;
 }
 
@@ -473,20 +492,18 @@ function applyPetOpacity() {
   petWrap.style.opacity = petOpacityNow();
 }
 
-/** 立即停止叠加帧播放/挂起，恢复本体显示（拖动/切形态/隐藏/抛掷时调用）。
- *  被中断的是特效 → 重新排下一次“再试”（否则调度器断链，特效从此不再触发）。 */
+/** 立即停止叠加帧播放，恢复本体显示（拖动/切形态/隐藏/抛掷时调用）。
+ *  特效调度器无条件重排：上面刚 clearTimeout 过，不补排就等于一次打断把特效永久掐断。 */
 function abortOverlayPlayback() {
   if (app.blink.endTimer) { clearTimeout(app.blink.endTimer); app.blink.endTimer = null; }
   if (app.effectFx.timer) { clearTimeout(app.effectFx.timer); app.effectFx.timer = null; }
   const wasPlaying = overlayBusy();
-  const wasFx = app.effectFx.playing;
   app.blink.playing = false;
   app.effectFx.playing = false;
-  app.effectFx.pending = false;
   setBlinkVisible(false);
   if (app.pet) petEl.style.display = '';
   if (wasPlaying) applyPetOpacity();
-  if (wasFx) scheduleEffectTry();
+  scheduleEffectTry();
 }
 
 /** 依次播放叠加帧（每帧显示各自 durationMs，播完恢复本体）。
@@ -495,7 +512,7 @@ function playOverlayFrames(frames, done) {
   let i = 0;
   const step = () => {
     app.blink.endTimer = null;
-    if (!app.pet || app.stateVisual.visible || app.paused || app.dragging || i >= frames.length) {
+    if (!app.pet || app.stateVisual.mode !== 'main' || app.paused || app.dragging || i >= frames.length) {
       finishOverlayPlayback();
       if (done) done();
       return;
@@ -516,72 +533,155 @@ function finishOverlayPlayback() {
   applyPetOpacity(); // 播放中暂停的透明度变化，播完恢复
 }
 
-/**
- * 切换形态 = 换一具身体：主形象与状态形象都是完整解码的"身体"（各自位图/锚点/尺寸），
- * app.pet 指向当前身体 → 像素判定/拖动/抛掷/吸附/呼吸/背景跟随/气泡爱心定位等全部作用于它。
- * 切换保持"底边中点"位置连续（原地换装；吸附中切换仍挂原窗口顶沿）。
- * 状态形象未成功加载（stateBody=null）时切换请求无效，维持主形态并回报同步。
- */
-function setStateVisible(v) {
-  const want = !!v;
-  if (want && (!app.stateBody || !app.mainBody)) { ipcRenderer.send('state:visualSync', { useState: false }); return; }
-  if (app.stateVisual.visible === want) { ipcRenderer.send('state:visualSync', { useState: app.stateVisual.visible }); return; }
-  abortOverlayPlayback(); // 叠加帧属于主形象：切形态前停掉眨眼/特效并恢复本体
+/* ================= 视觉形态（三态：主宠物图 / 状态图 / 打字状态） =================
+ * 切换形态 = 换一具身体：每种形态都是完整解码的"身体"（各自位图/锚点/尺寸），app.pet 指向
+ * 当前身体 → 像素判定/拖动/抛掷/吸附/背景跟随/气泡爱心定位等全部作用于它。
+ * 换身体保持"底边中点"位置连续（原地换装；吸附中切换仍挂原窗口顶沿）。
+ * 目标形态的身体没加载成功 → 一律退回主形态并如实回报勾选态（不"选了却没反应"）。 */
+
+/** 形态 → 默认展示的身体（打字形态的默认是第三张图：不打字）。 */
+function visualBody(mode) {
+  if (mode === 'state') return app.stateBody;
+  if (mode === 'type') return app.typeIdleBody;
+  return app.mainBody;
+}
+
+/** 形态可用性：主形态总可用；状态形态要状态图；打字形态要两张打字帧 + 一张不打字图。 */
+function visualAvailable(mode) {
+  if (mode === 'state') return !!app.stateBody;
+  if (mode === 'type') return app.typeBodies.length === 2 && !!app.typeIdleBody;
+  return true;
+}
+
+/** 当前活动身体是哪一具（诊断 / 测试快照）。 */
+function bodyKindOf(b) {
+  if (!b) return null;
+  if (b === app.mainBody) return 'main';
+  if (b === app.stateBody) return 'state';
+  if (b === app.typeIdleBody) return 'typeIdle';
+  const i = app.typeBodies.indexOf(b);
+  return i >= 0 ? `type${i + 1}` : 'unknown';
+}
+
+/** 把当前身体换成 next：底边中点连续（同尺寸就是纯换图）。
+ *  切形态与打字帧交替共用这一条路径。 */
+function applyBody(next) {
   const old = app.pet;
-  const next = want ? app.stateBody : app.mainBody;
-  if (old && next && old.pos) {
-    // 底边中点连续：换身体前后"站在原地"
+  if (!next) return false;
+  if (old && old.pos) {
     const bottom = old.pos.y + old.h;
     const cx = old.pos.x + old.w / 2;
     next.pos = { x: Math.round(cx - next.w / 2), y: Math.round(bottom - next.h) };
   }
   app.pet = next;
-  app.stateVisual.visible = want;
   drawBody(next);
   clampPetIntoWorld(next);
-  petEl.style.transform = ''; // 清掉旧身体的缩放形变（弹簧下一帧按新身体重算）
-  if (want) setBlinkVisible(false); // 闭眼图属于主形象：状态形态不眨眼
   syncPlacement();
-  // 回报主进程当前形态（菜单单选项勾选态依据）
-  ipcRenderer.send('state:visualSync', { useState: app.stateVisual.visible });
+  return true;
 }
 
-function toggleStateVisual() {
-  setStateVisible(nextStateVisual(app.stateVisual.visible));
-  return app.stateVisual.visible;
+/** 回报主进程当前形态（菜单单选项勾选态依据 + 决定打字探针启停）。 */
+function syncVisualMode() {
+  ipcRenderer.send('state:visualSync', { mode: app.stateVisual.mode });
 }
 
-/* ================= 眨眼（呼吸零点触发）与随机特效动画 =================
- * 两者共用“呼吸零点”这个起播门禁（本体恰在未变形尺寸，图层切换无跳变），
- * 并以状态标志做严格互斥（特效优先）：任何一方挂起/播放中，另一方不起播。 */
+function setVisualMode(mode) {
+  let want = normalizeVisualMode(mode);
+  if (!visualAvailable(want)) want = 'main';
+  if (want === app.stateVisual.mode && app.pet === visualBody(want)) { syncVisualMode(); return; }
+  abortOverlayPlayback(); // 叠加帧属于主形象：切形态前停掉眨眼/特效并恢复本体
+  stopTyping();           // 进/出打字态都要复位帧机与停手定时器
+  if (!applyBody(visualBody(want))) { syncVisualMode(); return; }
+  app.stateVisual.mode = want;
+  petEl.style.transform = ''; // 清掉旧身体的缩放形变（弹簧下一帧按新身体重算）
+  if (want !== 'main') setBlinkVisible(false); // 闭眼图属于主形象：其它形态不眨眼
+  syncVisualMode();
+}
+
+/** 轮换到下一个可用形态（菜单是直达项，这条给测试钩子/循环用）。 */
+function toggleVisualMode() {
+  let m = app.stateVisual.mode;
+  for (let i = 0; i < VISUAL_MODES.length; i++) {
+    m = nextVisualMode(m);
+    if (visualAvailable(m)) break;
+  }
+  setVisualMode(m);
+  return app.stateVisual.mode;
+}
+
+/* ================= 打字状态（形态三）：每按一下键盘换一帧，停手 idleMs 回第三张图 ==========
+ * 节拍来源：主进程键盘探针 → typing:beat。交替/限幅/停手判定的纯逻辑在 shared/typing.js，
+ * 行为线由单测锁死，不依赖真敲键盘。
+ * 中文/英文一律同一套判定：只认"有没有文本键被按下"，不检测输入法候选窗（候选窗类名随
+ * 输入法与版本而变，且"候选窗跟随光标"模式下根本没有独立窗口可查）。 */
+
+function onTypingBeatReceived() {
+  if (app.stateVisual.mode !== 'type' || !visualAvailable('type')) return;
+  const r = onTypingBeat(app.typing.machine, Date.now(), app.typing.cfg);
+  app.typing.machine = r.s;
+  applyBody(app.typeBodies[r.frame]);
+  armTypingIdle(r.idleInMs);
+}
+
+/** 停手倒计时：每一拍都重排（先 clearTimeout 再排，与特效调度器同一条"幂等重排"红线）。 */
+function armTypingIdle(ms) {
+  if (app.typing.timer) clearTimeout(app.typing.timer);
+  app.typing.timer = setTimeout(typingIdleCheck, Math.max(16, Math.round(ms)));
+}
+
+function typingIdleCheck() {
+  app.typing.timer = 0;
+  if (app.stateVisual.mode !== 'type') return;
+  const r = onTypingIdleCheck(app.typing.machine, Date.now());
+  app.typing.machine = r.s;
+  if (r.frame === TYPING_IDLE) { applyBody(app.typeIdleBody); return; }
+  armTypingIdle(r.waitMs); // 判定前又来了节拍 → 按剩余时间再排一次
+}
+
+function stopTyping() {
+  if (app.typing.timer) { clearTimeout(app.typing.timer); app.typing.timer = 0; }
+  app.typing.machine = createTypingMachine();
+}
+
+/** 当前显示第几张打字图（-1 = 第三张"不打字"图）。 */
+function typingFrameIndex() {
+  if (app.stateVisual.mode !== 'type') return TYPING_IDLE;
+  return app.pet === app.typeIdleBody ? TYPING_IDLE : app.typeBodies.indexOf(app.pet);
+}
+
+/* ================= 眨眼与随机特效动画（两条独立心跳，互斥：谁在播另一方就跳过） ==========
+ * 触发不再依赖呼吸零点：眨眼 3~8s 随机一次、特效 15~25s 随机一次，到点直接播；
+ * 被占用（拖动/飞行/手势/睡觉/切形态/隐藏/另一方在播）就顺延，不排队堆积。 */
 
 function canStartOverlay() {
   // 休息（睡觉时透明度正弦闪烁）期间不起播：眨眼/特效帧是整幅不透明的"换一具身体"，
-  // 会把睡颜的半透明顶掉 150ms（视觉上=睡着的人突然闪一下又不透明了）。
-  return !!app.pet && !app.stateVisual.visible && !app.paused && !overlayBusy() &&
-    !(app.rest && app.rest.active);
+  // 会把睡颜的半透明顶掉一瞬（视觉上=睡着的人突然闪一下又不透明了）。
+  return !!app.pet && app.stateVisual.mode === 'main' && !app.paused && !overlayBusy() &&
+    !(app.rest && app.rest.active) &&
+    !app.dragging && !app.phys && !app.gtr.isInteracting;
 }
 
-/** 呼吸零点（tickAnimations 检测到主波符号翻转时调用）。 */
-function onBreathZero() {
-  // 特效优先：已挂起 → 本零点归特效
-  if (app.effectFx.pending) {
-    if (!canStartOverlay()) return; // 条件不满足 → 继续挂起等下一个零点
-    app.effectFx.pending = false;
-    startEffectPlayback();
-    return;
+/** 眨眼的下一次心跳。 */
+function scheduleBlink() {
+  if (app.blink.timer) clearTimeout(app.blink.timer);
+  app.blink.timer = 0;
+  const min = CFG.blink.minIntervalMs, max = CFG.blink.maxIntervalMs;
+  const delay = Math.max(0, min) + Math.random() * Math.max(0, max - min);
+  app.blink.timer = setTimeout(() => { app.blink.timer = 0; tryBlink(); }, delay);
+}
+
+/** 心跳到点：能播就播一次眨眼，随后无条件排下一次（占用中就等于这次没眨，顺延）。 */
+function tryBlink() {
+  if (canStartOverlay()) {
+    const multi = app.blinkAnim.frames.length > 0;
+    const frames = multi ? app.blinkAnim.frames : (app.blinkBody ? [app.blinkBody] : []);
+    // 多帧动画模式保留 blinkAnim.probability（这次要不要演一遍）；单图降级到点就眨
+    if (frames.length && (!multi || shouldPlayBlinkAnim(app.blinkAnim.probability))) {
+      app.blink.playing = true;
+      playOverlayFrames(frames, () => { app.blink.playing = false; });
+    }
   }
-  /* 眨眼自动触发曾于 2026-09-10 暂时注释关闭，2026-09-27 按用户"怎么没见它眨眼"恢复。
-   * 播放机制（playOverlayFrames / blinkBody / 多帧 blinkAnim）与测试钩子
-   * （playBlinkAnim / forceBlink）从未动过。 */
-  if (!canStartOverlay()) return;
-  const multi = app.blinkAnim.frames.length > 0;
-  const chance = multi ? app.blinkAnim.probability : CFG.blink.zeroChance;
-  if (!shouldPlayBlinkAnim(chance)) return;
-  const frames = multi ? app.blinkAnim.frames : (app.blinkBody ? [app.blinkBody] : []);
-  if (!frames.length) return;
-  app.blink.playing = true;
-  playOverlayFrames(frames, () => { app.blink.playing = false; });
+  scheduleBlink();
 }
 
 /** 随机特效动画：每次播完/跳过后在 min~max 间隔随机“再试”。 */
@@ -594,14 +694,11 @@ function scheduleEffectTry() {
   app.effectFx.timer = setTimeout(() => { app.effectFx.timer = null; effectTry(); }, delay);
 }
 
-/** 到点“再试”：占用中（拖动/物理/手势/状态形态/隐藏/其它叠加播放）→ 跳过本轮；
- *  空闲 → 挂起，等下一个呼吸零点起播（起播门禁，见 playOverlayFrames 注释）。 */
+/** 到点“再试”：占用中直接顺延一轮，空闲就立刻起播（本体不做待机缩放，切换不跳）。 */
 function effectTry() {
   if (!app.effectFx.groups.length) return;
-  const busy = !app.pet || app.dragging || app.phys || app.gtr.isInteracting ||
-    app.stateVisual.visible || app.paused || overlayBusy() || app.effectFx.pending;
-  if (busy) { scheduleEffectTry(); return; }
-  app.effectFx.pending = true;
+  if (!canStartOverlay()) { scheduleEffectTry(); return; }
+  startEffectPlayback();
 }
 
 function startEffectPlayback() {
@@ -640,38 +737,9 @@ function tickAnimations(dt, ms) {
   const P = springParams();
   A.spr.x = integrateSpring(A.spr.x, dt, P);
   A.spr.y = integrateSpring(A.spr.y, dt, P);
-  // 拖动/飞行中呼吸暂停（相位冻结：暂停多久冻结多久）；恢复时幅度 0.5s 内从 0 渐回满幅，
-  // 恢复瞬间与冻结状态完全连续（手册 #6：暂停后恢复不能从 0 跳回波形中段）。
-  const idle = !app.phys && !app.dragging;
-  if (idle) {
-    A.breathT += dt * 1000;
-    A.ramp = Math.min(1, A.ramp + dt / 0.5);
-  } else {
-    A.ramp = 0;
-  }
-  const br = idle
-    ? breathe(A.breathT, { amplitude: CFG.anim.breatheAmplitude * A.ramp })
-    : { x: 1, y: 1 };
-  const sx = A.spr.x.s * br.x;
-  const sy = A.spr.y.s * br.y;
-  setScale(sx, sy);
-  applyOverlayScale(sx, sy); // 叠加帧（眨眼/特效）跟随实时呼吸缩放，图层切换尺度连续
-  A.drawnScale = { x: sx, y: sy };
-  // 呼吸零点（主波 x 偏移符号翻转）→ 眨眼/特效的起播机会；非待机期间不产生零点
-  if (idle && A.ramp > 0) {
-    const off = br.x - 1;
-    if (isBreathZeroCross(A.breathSign, off)) onBreathZero();
-    A.breathSign = off;
-  } else {
-    A.breathSign = 0;
-  }
+  // 待机不做任何缩放（原"呼吸波"已删除）：只有 q 弹（摸头/喂食/落地）会让形状短暂变形
+  setScale(A.spr.x.s, A.spr.y.s);
   updateRing(dt);
-}
-
-/** 叠加帧层跟随实时呼吸缩放（本体隐藏期间由它保持“宠物在呼吸”的连续性）。 */
-function applyOverlayScale(sx, sy) {
-  if (!app.blink.visible) return;
-  blinkEl.style.transform = sx === 1 && sy === 1 ? '' : `scale(${sx.toFixed(4)}, ${sy.toFixed(4)})`;
 }
 
 /* ================= 物理（抛掷/坠落；吸附 Phase 3 接入） ================= */
@@ -947,7 +1015,9 @@ function bindIpc() {
   ipcRenderer.on('region:changed', (_e, { regionScreen }) => applyRegion(regionScreen));
   ipcRenderer.on('ui:openRegionEditor', () => openRegionEditor());
   ipcRenderer.on('ui:openPicker', (_e, { kind }) => openPetPicker(kind));
-  ipcRenderer.on('state:visual', (_e, { useState }) => setStateVisible(!!useState));
+  ipcRenderer.on('state:visual', (_e, { mode }) => setVisualMode(mode));
+  // 打字状态（形态三）：主进程键盘探针每命中一个文本键推一拍 → 换一帧（逻辑见 shared/typing.js）
+  ipcRenderer.on('typing:beat', () => onTypingBeatReceived());
   // ---- 气泡类：启动问候之外的待办提醒 / 随机催促 / 聊天回复 ----
   ipcRenderer.on('bubble:todo', (_e, { text, ms }) => showBubble(text, ms));
   ipcRenderer.on('bubble:reminder', (_e, { text, ms }) => showBubble(text, ms));
@@ -1668,10 +1738,7 @@ function testState() {
     interactive: app.ignoreSent === false,
     world: { w: app.worldW, h: app.worldH },
     pet: p ? { w: p.w, h: p.h, x: p.pos.x, y: p.pos.y, anchor: { ...p.anchor }, col: { ...p.col } } : null,
-    animScale: p ? (() => {
-      const d = app.anim.drawnScale || { x: 1, y: 1 };
-      return { sx: app.anim.spr.x.s, sy: app.anim.spr.y.s, drawnSy: d.y, drawnSx: d.x };
-    })() : null,
+    animScale: p ? { sx: app.anim.spr.x.s, sy: app.anim.spr.y.s } : null, // 弹簧即最终缩放（无呼吸叠加）
     // 吸附 / 抛掷 状态快照
     phys: app.phys ? {
       x: app.phys.s.x, y: app.phys.s.y, vx: app.phys.s.vx, vy: app.phys.s.vy,
@@ -1690,10 +1757,15 @@ function testState() {
     bubbleVisible: !!(bubbleEl && bubbleEl.classList.contains('show')),
     blinkAnim: { frames: app.blinkAnim.frames.length, probability: app.blinkAnim.probability },
     blinkPlaying: app.blink.playing,
-    fxAnim: { groups: app.effectFx.groups.length, pending: app.effectFx.pending, playing: app.effectFx.playing },
-    stateVisualVisible: app.stateVisual.visible,
+    fxAnim: { groups: app.effectFx.groups.length, playing: app.effectFx.playing },
+    visualMode: app.stateVisual.mode,
     stateBodyReady: !!app.stateBody,
-    bodyKind: app.pet === app.stateBody ? 'state' : 'main', // 当前活动身体
+    // 形态三：三张图的到位情况 + 帧机当前状态（frame=-1 表示正显示"不打字"那张）
+    typingReady: { frames: app.typeBodies.length, idle: !!app.typeIdleBody },
+    typingFrame: typingFrameIndex(),
+    typingMachine: { ...app.typing.machine },
+    typingCfg: { ...app.typing.cfg },
+    bodyKind: bodyKindOf(app.pet), // 当前活动身体
     pillText: pillEl.querySelector('.txt').textContent,
     petOpacity: p ? petWrap.style.opacity : null,
     bgOn: !!app.bgOn,
@@ -1715,19 +1787,21 @@ function testState() {
   };
 }
 
-/** 单帧路径 → 解码成"帧身体"（位图/锚点/碰撞盒 + 显示时长）。
+/** 任意素材路径 → 解码成一具身体。
  *  "../" 开头 = 相对渲染层目录（src/renderer/）的内置素材（含 ../../动画素材/…），直读文件；
  *  其余相对 data/ 或绝对路径，经主进程 asset:readImage（含 ICC 剥离）读取。 */
-async function decodeFramePath(p, durationMs) {
-  let body;
+async function decodeImageAnyPath(p) {
   if (typeof p === 'string' && p.startsWith('../')) {
-    body = await decodeImageSrc(p, CFG.image.petMaxDim);
-  } else {
-    const img = await ipcRenderer.invoke('asset:readImage', p);
-    if (!img) throw new Error('帧图片读取失败');
-    body = await decodeImageDataUrl(img.dataUrl, CFG.image.petMaxDim);
+    return decodeImageSrc(p, CFG.image.petMaxDim);
   }
-  return { ...body, durationMs };
+  const img = await ipcRenderer.invoke('asset:readImage', p);
+  if (!img) throw new Error('图片读取失败');
+  return decodeImageDataUrl(img.dataUrl, CFG.image.petMaxDim);
+}
+
+/** 单帧路径 → 解码成"帧身体"（位图/锚点/碰撞盒 + 显示时长）。 */
+async function decodeFramePath(p, durationMs) {
+  return { ...(await decodeImageAnyPath(p)), durationMs };
 }
 
 /** 启动时按 config.js 载入"可定制值"（config.js 是唯一定制入口）：
@@ -1757,7 +1831,7 @@ async function initCustomConfig() {
   // 降级单图眨眼（未配置多帧时使用；缺失只是不眨，不影响其它功能）。
   // 必须自带 durationMs（playOverlayFrames 按帧取时长，undefined 会让眨眼瞬间闪没）。
   try {
-    app.blinkBody = { ...(await decodeImageSrc('../assets/blink.png', CFG.image.petMaxDim)), durationMs: CFG.blink.zeroFrameMs };
+    app.blinkBody = { ...(await decodeImageSrc('../assets/blink.png', CFG.image.petMaxDim)), durationMs: CFG.blink.frameMs };
   } catch { app.blinkBody = null; }
 }
 
@@ -1794,12 +1868,15 @@ async function init() {
     hintEl.style.display = 'block';
   }
   void loadStateBody(); // 预载状态形象（第二具身体）；失败只是切换状态不可用，不影响主形象
+  void loadTypingBodies(); // 预载形态三（打字两帧 + 不打字图）；失败则该形态自动不可用
   refreshPill();
 
   app.ready = true;
   window.__petReady = true;
   window.__pet = app;
-  // 随机特效动画的第一次“再试”（测试模式不自动随机触发，由 __petTest 手动驱动）
+  // 眨眼心跳照常起（UI 场景要能等到一次"没人调用"的自动眨眼）；特效仍只在真实运行时随机触发，
+  // 测试里由 __petTest.playEffect() 手动驱动，免得整帧替换撞上别的场景断言。
+  scheduleBlink();
   if (!app.testMode) scheduleEffectTry();
   setTimeout(() => {
     const list = CFG.greeting.greetings || [];
@@ -1825,7 +1902,12 @@ async function init() {
           .map((f) => ({ src: f.src, durationMs: clamp(Number(f.durationMs) || 150, 30, 5000) }));
         app.blinkAnim.probability = clamp(Number(probability == null ? 1 : probability), 0, 1);
       },
-      // 立即播放一次眨眼（跳过零点掷骰；忙/状态形态/无帧 → false）
+      // 眨眼心跳开关：UI 场景先关掉再做精确断言，最后打开等一次真实的自动眨眼
+      setBlinkHeartbeat(on) {
+        if (on) scheduleBlink();
+        else { if (app.blink.timer) clearTimeout(app.blink.timer); app.blink.timer = 0; }
+      },
+      // 立即播放一次眨眼（跳过心跳等待；忙/睡觉/状态形态/无帧 → false）
       playBlinkAnim() {
         if (!canStartOverlay()) return false;
         const frames = app.blinkAnim.frames.length ? app.blinkAnim.frames : (app.blinkBody ? [app.blinkBody] : []);
@@ -1850,7 +1932,16 @@ async function init() {
         startEffectPlayback();
         return true;
       },
-      toggleStateVisual: () => toggleStateVisual(),
+      toggleStateVisual: () => toggleVisualMode(),
+      setVisualMode: (m) => { setVisualMode(m); return app.stateVisual.mode; },
+      // 形态三驱动入口：注入一次"打字节拍"（等价于主进程探针上报，UI 场景不必真敲键盘，
+      // 也不会读到机器上真人正在打的字）；返回值 = 当前第几张打字图（-1=不打字图）。
+      typingBeat() { onTypingBeatReceived(); return typingFrameIndex(); },
+      // 把停手倒计时改短（UI 场景用它验"停手回第三张图"，不必死等 config 的 1s）
+      setTypingIdleMs(ms) {
+        app.typing.cfg = { ...app.typing.cfg, idleMs: clamp(Math.round(ms), 200, 30000) };
+        return app.typing.cfg.idleMs;
+      },
       showBubble: (text, ms) => showBubble(text, ms),
       hideBubble: () => hideBubble(),
       forcePhys(vx, vy) { startPhys({ vx, vy }); },

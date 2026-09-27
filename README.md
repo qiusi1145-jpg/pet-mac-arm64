@@ -2,7 +2,7 @@
 
 一个常驻系统托盘的桌面宠物：养一张透明 PNG「小人」——摸头、喂食、1:1 拖动、抛掷物理、
 吸附到其它窗口顶沿挂着、长按锁定、休息（透明闪烁回体力）、状态养成、背景图、BGM、待办到期提醒 +
-♥ 待办随机催促、自定义关键词聊天、眨眼动画（呼吸零点触发 + 多帧序列）、随机特效动画（动画1/动画2）、
+♥ 待办随机催促、自定义关键词聊天、眨眼动画（随机心跳 + 多帧序列）、随机特效动画（动画1/动画2）、
 切换状态（换一具身体）。
 **「学习」菜单**：学英语（翻译练习 / 选词填空 / 背单词间隔重复 + 四选一/拼写题型 + 小测 + 统计打卡 +
 积分段位 + 桌宠催背，初中到专八 7 档词库，6 套主题、柔和/标准配色）+ **番茄钟**（预设/自定义时长）+
@@ -62,7 +62,7 @@ npm run voice:diag         # 全链路诊断（开麦约 3 秒）：麦克风 / 
 | 按住拖动 | **1:1 直接跟手**（无惯性/缓动/重力） |
 | 快速甩出松开 | 抛掷：重力/阻力/边界反弹/落地压扁，**永不越出活动区域**（边界/落地按不透明像素碰撞盒） |
 | 低速靠近窗口顶沿松开 | **吸附**到该窗口顶沿挂着（实体像素底边贴顶）；目标窗口被移动/最小化/关闭 → 坠落 |
-| 左键长按 3s（0.5s 起进度环） | **锁定** = 整窗点击穿透（呼吸照常；置顶级别恒为最高档）；再长按或托盘解锁 |
+| 左键长按 3s（0.5s 起进度环） | **锁定** = 整窗点击穿透（动画照常；置顶级别恒为最高档）；再长按或托盘解锁 |
 | 右键长按 1.5s | 弹出 Windows 风格主菜单 |
 | 托盘图标 | 隐藏/显示、锁定/解锁（**解锁是锁死的唯一保底**）、「窗口顶沿吸附」/「物理模拟」开关、主菜单…、活动区域设置…、退出；左键双击显示宠物 |
 
@@ -85,7 +85,7 @@ npm run voice:diag         # 全链路诊断（开麦约 3 秒）：麦克风 / 
 | 学习 ▸ 学习计划表 | 周视图日程窗（含桌宠主图缩小后的装饰） |
 | 音乐 ▸ … | 添加音乐…/播放暂停/下一首/上一首/停止/清空（子菜单标题带曲目数） |
 | 背景 ▸ … | 选择背景图片…/清除背景/不透明度 25/50/75/100%（radio） |
-| 切换状态 | 「主宠物图」「状态图」两个单选项（换一具身体，见下） |
+| 切换状态 | 「主宠物图」「状态图」「打字状态」三个单选项（换一具身体，见下）；打字状态 = 全局按键监听驱动三张图 |
 | 重置状态 | 情绪/体力/饱食/好感回到初始（80/100/80/0） |
 | 退出 | 保存并退出 |
 
@@ -116,24 +116,35 @@ npm run voice:diag         # 全链路诊断（开麦约 3 秒）：麦克风 / 
 - **BGM**：应用内选曲（mp3/wav/ogg/flac/m4a/aac）拷贝进 assets 自动开播（若未在播），面板可连续加；
   放完自动下一首、损坏文件 800ms 限频跳歌。启动加载列表但不自动播；隐藏暂停、恢复不续播。**无音量 UI**（默认
   `config.js audio.volumeDefault`=0.6）。
-- **眨眼**（2026-09-10~09-27 曾把自动触发注释关闭，现已恢复）：主循环逐帧检测**呼吸缩放偏移归零（符号翻转）**
-  的零点，每个零点按 `config.js blink.zeroChance`（默认 90%）掷骰触发；**未配置多帧**则降级为单图 `src/assets/blink.png`
-  （替换同名文件生效；内置占位图与主图同画布同脚底、只差眼睛开合，见「换图即定制（素材）」）显示 150ms；**配置了多帧**（`blinkAnim.frames`）则按序播帧
-  （每帧各自 durationMs）。叠加层**跟随实时呼吸缩放**（图层切换尺度完全连续，不抖动）。
-  眨眼只属主形象：状态图形态不眨眼。呼吸幅度为 0（`anim.breatheAmplitude`）或暂停/拖动/飞行时没有零点 → 自然不眨。
+- **眨眼**：**独立随机心跳**——眨完一次在 `config.js blink.minIntervalMs~maxIntervalMs`（默认 3~8s）随机取间隔
+  再排一次，到点就眨（**2026-09-27 起触发不再依赖呼吸零点；待机呼吸波已整体删除**）。
+  **未配置多帧**则降级为单图 `src/assets/blink.png`（替换同名文件生效；内置占位图与主图同画布同脚底、
+  只差眼睛开合，见「换图即定制（素材）」）显示 `blink.frameMs`（默认 150ms）；**配置了多帧**
+  （`blinkAnim.frames`）则按 `blinkAnim.probability` 决定这次要不要演一遍、按序播帧（每帧各自 durationMs）。
+  眨眼只属主形象：状态图形态不眨眼。
   **休息（睡觉）期间眨眼与特效都不起播**（`canStartOverlay` 排除 rest）：叠加帧是整幅不透明的"换一具身体"，
   会把 25%↔75% 的睡颜闪烁顶掉一瞬。自动触发这条链路由 UI 场景 `blink` 兜底——它会真的等到一次"没人调用"的眨眼
   （这段曾被关闭 17 天而没有任何测试变红，就是因为只测了播放机制）。
 - **随机特效动画**：素材 = `动画素材/动画1、动画2`（各三帧，`config.js effectAnim.groups` 可改；内置为火柴人
   单手挥手 / 原地起跳各三帧，与主图同画布同脚底）。
-  每次播完/跳过后在 **15~25s** 随机取间隔再试；到点挂起，等下一个**呼吸零点**起播（本体恰在未变形尺寸，
-  图层切换无跳变）；播放时**整帧替换**本体（隐藏本体防双影）、跟随呼吸缩放、暂停透明度变化，播完恢复。
-  **与眨眼互斥**（特效优先）；拖动/物理/手势/切形态/隐藏时跳过本轮。
-- **切换状态（换一具身体）**：菜单「切换状态」两个单选项直达目标形态。语义是**换一具完整身体**不是贴图：
-  状态图走同一解码管线（等比缩放≤220px → 位图分析 → 实体中心锚点），切换后**像素判定/拖动/抛掷/吸附/
-  呼吸/背景跟随等全部功能照常作用于新身体**；切换保持「底边中点」原地连续。状态数值不变；形态**不持久化**
-  （重启回主宠物图）。状态图默认 `src/assets/state.png`（替换同名文件生效），也可 `config.js stateImage.path`
-  指定本地图覆盖路径（尺寸可与主图不同）。
+  每次播完/跳过后在 **15~25s** 随机取间隔再试，**到点直接起播**（本体不做待机缩放，任何时刻切换都不跳）；
+  播放时**整帧替换**本体（隐藏本体防双影）、暂停透明度变化，播完恢复。
+  **与眨眼互斥**（谁在播另一方就跳过本轮）；拖动/物理/手势/睡觉/切形态/隐藏时同样跳过。
+- **切换状态（换一具身体）**：菜单「切换状态」**三个**单选项直达目标形态（主宠物图 / 状态图 / 打字状态）。
+  语义是**换一具完整身体**不是贴图：每种形态走同一解码管线（等比缩放≤220px → 位图分析 → 实体中心锚点），
+  切换后**像素判定/拖动/抛掷/吸附/背景跟随等全部功能照常作用于新身体**；切换保持「底边中点」原地连续。
+  状态数值不变；形态**不持久化**（重启回主宠物图）。状态图默认 `src/assets/state.png`（替换同名文件生效），
+  也可 `config.js stateImage.path` 指定本地图覆盖路径（尺寸可与主图不同）。
+- **打字状态（形态三，2026-09-27 新增）**：选中后开启**全局按键监听**，桌宠随你在**任何程序**里打字而变：
+  **每按下一下键盘 → 在两张打字图之间交替一次**（图1 双手在键盘上 / 图2 右手抬起）；
+  **停手 1 秒**（`config.js typing.idleMs`）没有新按键 → 显示第三张图（双手身前交叠的"不打字"态）。
+  中文/英文**同一套判定**：只认"有没有文本键被按下"，**不检测输入法候选窗**——候选窗类名随输入法与版本而变，
+  且"候选窗跟随光标"模式下根本没有独立窗口可查，靠它判定会在换输入法后悄悄失效（这是当初讨论后砍掉的方向）。
+  素材 = `src/assets/type1.png`、`type2.png`、`type-idle.png`（`config.js typing.frames` / `idleFrame` 可换）。
+  三条边界与红线：① 探针**只上报"有一个文本键被按下"**，键值不跨进程、不落盘、不进日志；
+  ② 只在选中本形态且宠物可见时存在，切走/隐藏/退出立刻停探针，系统里不留全局钩子；
+  ③ 非 Windows 平台菜单项直接置灰并写明原因（不做"选了却没反应"）。
+  已知不可为：在**以管理员权限运行的程序**里打字时收不到按键（Windows UIPI 限制）、UAC 安全桌面同理。
 
 ## 学英语（独立学习窗口）
 
@@ -458,24 +469,26 @@ VOICE_E2E_OK
 全部素材路径与规则都在这一节（人/AI 都能照做，不再有单独的替换指南）。速记：
 
 - 主图 = 替换 `data\assets\pet\pet.png`（重启生效）。查找顺序：素材根目录 pet.png → 旧 `settings.pet.path`（遗留字段，不生效）→ 内置主图 `src\assets\pet.png`。
-- 状态图 = `src\assets\state.png` 或 `config.js stateImage.path`；眨眼图 = `src\assets\blink.png`（自动触发已在 2026-09-27 恢复，触发条件见「眨眼」条）；特效帧 = `动画素材\动画1、2` 或 `config.js effectAnim.groups`。
+- 状态图 = `src\assets\state.png` 或 `config.js stateImage.path`；眨眼图 = `src\assets\blink.png`（自动触发已在 2026-09-27 恢复，触发条件见「眨眼」条）；特效帧 = `动画素材\动画1、2` 或 `config.js effectAnim.groups`；打字状态三张图 = `src\assets\type1.png`、`type2.png`、`type-idle.png` 或 `config.js typing.frames`/`typing.idleFrame`。
 - 应用内**不提供换宠入口**（素材根目录在选择器里被拒绝列出，防误改）；图片等比缩到 ≤220px、alpha≥20 算实体像素；PNG 自动无损剥离 ICC 色彩块；显示走 `<img>` 原图直通管线（高分屏不发糊），画布只做判定分析。
-- **换正式美术时的对齐契约**：主图/状态图/眨眼图请给同一张尺寸、同一脚底位置、同一中轴的图。
-  切形态按「图像底边中点」原地换装、眨眼与特效帧按「包围盒底边中点」插帧，尺寸或脚底不一致就会原地跳位；
+- **换正式美术时的对齐契约**：主图/状态图/眨眼图/打字态三张图请给同一张尺寸、同一脚底位置、同一中轴的图。
+  切形态与打字帧交替都按「图像底边中点」原地换装（`app.js applyBody`）、眨眼与特效帧按「包围盒底边中点」插帧，尺寸或脚底不一致就会原地跳位；
   眨眼图必须是"只差眼睛"的整身图（旧版 96×96 只画一条眼线 = 脚边浮一条黑线）。
 
 ### 内置占位素材 = 火柴人（代码生成，别手改 PNG）
 
-2026-09-27 起，仓库里的 9 张内置素材全部换成**程序画出来的火柴人**（线条 + 一张笑脸）：
-主图/眨眼图/状态图/两组特效帧共用同一套端点坐标，只改姿势与眼睛开合。
+2026-09-27 起，仓库里的内置素材全部换成**程序画出来的火柴人**（线条 + 一张笑脸），共 12 张：
+主图/眨眼图/状态图/打字态三张图/两组特效帧共用同一套端点坐标，只改姿势与眼睛开合。
 
-- 生成：`npm run assets:gen`（`tools/gen-assets.js`，纯 Node 无依赖，约 5 秒出 9 张，**重跑幂等**）。
+- 生成：`npm run assets:gen`（`tools/gen-assets.js`，纯 Node 无依赖，约 7 秒出 12 张，**重跑幂等**）。
   产出提交进仓库，运行时不依赖该脚本；想调体型/姿势就改脚本里的端点坐标表重跑。
+  三张打字图的**路径取自 `config.js typing`**（生成器 / `assets.test.js` 守卫 / 应用加载三方同源）。
 - 统一规格：320×320 画布、脚底基线 y=300、中轴 x=160（短边 ≥256 供打包脚本切 exe 图标）；只写
-  IHDR/IDAT/IEND，天生无色彩档案块。9 张合计 48KB（旧素材 2.6MB）。
-- 姿势：主图站姿睁眼 · 眨眼图同姿势闭眼（两条下弯眼线）· 状态图双手举到头侧 · 动画1 单手挥手三帧 ·
-  动画2 屈膝蓄力 → 伸直上冲 → 落地三帧。姿势一律左右镜像（挥手的举臂不越过站姿手部横向范围），
-  否则包围盒中轴一偏，插帧瞬间人物会横移。
+  IHDR/IDAT/IEND，天生无色彩档案块。12 张合计 64KB（旧素材 2.6MB）。
+- 姿势：主图站姿睁眼 · 眨眼图同姿势闭眼（两条下弯眼线）· 状态图双手举到头侧 · 打字态图1 双手搭在
+  "键盘"横线上（略低头）· 图2 右手抬离横线（与图1 随按键交替）· 图3 双手身前交叠（停手时）·
+  动画1 单手挥手三帧 · 动画2 屈膝蓄力 → 伸直上冲 → 落地三帧。姿势一律左右镜像（挥手的举臂不越过
+  站姿手部横向范围），否则包围盒中轴一偏，插帧瞬间人物会横移。
 - 守卫：`test/unit/assets.test.js` 逐张锁死上述契约（同画布、脚底/中轴对齐、无色彩块、四角全透明、
   眨眼图与主图仅眼睛带内有像素差），素材一改就跑不掉的回归。
 
@@ -497,9 +510,10 @@ VOICE_E2E_OK
 - **置顶级别恒为最高档（screen-saver）**：锁定/解锁差异只在"是否整窗穿透"，不在层级（低级别会被其它
   置顶/全屏应用遮挡）；"伸手即置顶"——从穿透转可交互的瞬间主进程 `moveTop()` 抬到 z 序最上。
 - **点击判定细节**：气泡/胶囊/面板/选择器等 UI 矩形参与命中；气泡显示时指针在气泡上窗口可交互、可点关。
-- **呼吸零点仲裁**：眨眼与特效动画都以"主呼吸波偏移归零（符号翻转）"为起播门禁、以**状态标志**互斥
-  （特效优先）；等待期间条件变化（互动/切形态/隐藏）即放弃。呼吸在拖动/飞行中**相位冻结**，恢复时
-  幅度 0.5s 内从 0 渐回满幅（衔接连续不突跳）。
+- **叠加帧仲裁**：眨眼与特效动画各自独立随机心跳（3~8s / 15~25s），共用 `canStartOverlay()` 这一道闸门
+  （拖动/飞行/手势/睡觉/切形态/隐藏/另一方在播 → 一律跳过本轮、顺延下一次）；两者都走
+  `playOverlayFrames`，所以同一时刻只有一个在播。**待机呼吸波已于 2026-09-27 删除**：本体静止时缩放恒为 1，
+  整帧替换任何时刻切换都不跳，原先"等呼吸零点起播"的门禁随之消失。
 - **窗口**：宠物窗 + 待办/聊天/聊天设置/学英语/番茄钟/学习计划表/语音聊天设置 7 个工具窗 +
   **语音识别进程**（`asr.html`，隐藏窗、无 UI，跑采集与推理）；托盘常驻（关窗不退出），单实例锁。
   工具窗统一由 `openToolWindow()` 创建（同一套 webPreferences：`spellcheck:false`、`backgroundThrottling:false`）。
@@ -510,15 +524,17 @@ VOICE_E2E_OK
 - **发射契约**：事件总线 `emit` 是**单参 kind**（`emit('feed')`，不是 `emit(kind,data)`）——改它会让喂食回归。
 - 已知怪癖：宠物位置 `pos` 只写不读（重启总回底部居中）；播放列表 `name` 字段重载后丢（无 UI 显示，无感）；
   到期提醒锁定照弹 vs 随机催促锁定不触发（差异是有意为之）；单主屏设计；聊天历史不持久化。
-- **开发速查**（原《项目功能与实现原理总览》要点并入，该文档已删）：shared 8 个纯函数模块各管一域
-  （config 调参 / util 工具+PNG 剥离 / geom 位图与区域 / motion 手势·物理·弹簧·吸附 / status 状态 /
-  blink 眨眼 / content 设置·待办·聊天 / english 学英语）。加新功能套路：①规则做成 shared 纯函数 + 单测 →
+- **开发速查**（原《项目功能与实现原理总览》要点并入，该文档已删）：shared 9 个纯函数模块各管一域
+  （config 调参 / util 工具+PNG 剥离 / geom 位图与区域 / motion 手势·物理·弹簧·吸附 / status 状态+视觉形态枚举 /
+  blink 眨眼 / typing 打字状态帧机（逐键交替 + 停手判定 + 文本键白名单）/ content 设置·待办·聊天 / english 学英语）。
+  加新功能套路：①规则做成 shared 纯函数 + 单测 →
   ②主进程加 IPC/菜单项 → ③渲染层 UI 记得进 `updateUiRects()` 命中矩形 → ④持久化字段在
   `defaultSettings()`/`normalizeSettings()` 双份同步 → ⑤补 UI 场景 → ⑥自检锁定穿透/隐藏暂停/config 深冻结。
   IPC 分组：渲染层 invoke（app:init / asset:* / picker:* / audio:addFiles / todo:* / chat:* / chatRules:* /
   english:* / region:resize / enumerate:windows）+ send（win:setIgnore、win:setFocusable、ui:lock、
   settings:save、menu:open、state:visualSync）；主进程推（cursor:pos / lock:change / app:visibility /
-  region:changed / ui:open* / state:visual / bubble:todo|reminder|chat / menu:closed / snap:enabled /
+  region:changed / ui:open* / state:visual / **typing:beat（打字状态：探针每命中一个文本键推一拍）** /
+  bubble:todo|reminder|chat / menu:closed / snap:enabled /
   physics:enabled / pet:action / bg:* / audio:*）。
 
 ## 定制与调参（改 config.js）
@@ -526,9 +542,10 @@ VOICE_E2E_OK
 **所有**可调参数、文案、菜单、素材路径集中在一个文件：`src/shared/config.js`（模块加载即深冻结；
 每键有中文注释）。**config.js 就是唯一调参/定制入口**（不再有开发者模式/固化文件/覆盖层——已整体精简掉）。
 常见定制：改启动问候 `greeting.greetings`、到期/催促文案 `todo.remindTemplate`/`reminder.template`、
-聊天文案 `chat.strings`、菜单文本与隐藏 `menu.items`、眨眼（零点触发概率 `blink.zeroChance`、多帧
-`blinkAnim`）、随机特效动画 `effectAnim`（组/帧/间隔；帧 path 以 `../` 开头 = 相对 `src/renderer/` 的内置
-素材，其余相对 `data/` 或绝对路径）、状态图路径 `stateImage.path`、全部手感/物理/状态/背景参数。
+聊天文案 `chat.strings`、菜单文本与隐藏 `menu.items`、眨眼（心跳间隔 `blink.minIntervalMs`/`maxIntervalMs`、
+单图时长 `blink.frameMs`、多帧 `blinkAnim`）、随机特效动画 `effectAnim`（组/帧/间隔；帧 path 以 `../` 开头 = 相对 `src/renderer/` 的内置
+素材，其余相对 `data/` 或绝对路径）、状态图路径 `stateImage.path`、**打字状态 `typing`（`frames` 两张打字帧 /
+`idleFrame` 不打字图 / `idleMs` 停手多久回第三张（默认 1000）/ `minFlipMs` 翻帧限幅）**、全部手感/物理/状态/背景参数。
 新增的几块也可直接改：**`chatEngine`**（引擎与 LLM 预留参数；`logFile`/`logMax` 是**聊天记录**的存放位置与条数上限）、
 **`voice`**（「后台唤醒」开关 `wake.enabled` + **按键说话键位 `ptt.{local,globalKey}`** + 唤醒词内置词库 `wake.builtin` + 模型白名单 `models` +
 端点静音 `endpointSilenceMs` + 语音对话的过短阈值 `dialog` + BGM 闪避音量 + 全部语音文案）、**`status`**
@@ -542,17 +559,18 @@ VOICE_E2E_OK
 三层自动化，命令与当前计数（改代码后以实际为准，改完同步本文件）：
 
 ```bash
-npm test            # L1 纯函数/引擎单测 + 主进程启动接线测试（node --test，零 Electron）—— 当前 298 例 / 18 文件
+npm test            # L1 纯函数/引擎单测 + 主进程启动接线测试（node --test，零 Electron）—— 当前 310 例 / 19 文件
 npm run test:smoke  # L2 真实启动冒烟（临时 userData + fixture 宠物；断言渲染 ready / 宠物解码 / 控制台零报错）
-npm run test:ui     # L3 真实渲染层 21 个 UI 场景（每个独立进程+独立临时 userData）
+npm run test:ui     # L3 真实渲染层 22 个 UI 场景（每个独立进程+独立临时 userData）
 PET_UI_ONLY='learn' npm run test:ui      # 调试：只跑指定场景
-npm run assets:gen  # 重新生成内置占位素材（火柴人 9 张，见「换图即定制（素材）」）
+npm run assets:gen  # 重新生成内置占位素材（火柴人 12 张，见「换图即定制（素材）」）
 npm run voice:spike # 语音自检（原生插件/关键类/模型加载），不建窗不碰鼠标，可随时跑
 npm run voice:e2e   # 语音**启动接线**自检：走真实启动路径等 asr:ready，打 VOICE_E2E_OK/FAIL（不进 UI 场景）
 npm run llm:e2e     # 大模型**端到端**自检：内置 mock 服务（不碰外网/不需真密钥），两阶段验密钥持久化
 ```
 
-21 个场景：greeting / blink / blinkAnim / **fxAnim（随机特效动画）** / stateVisual / lock / todo / reminder /
+22 个场景：greeting / blink / blinkAnim / **fxAnim（随机特效动画）** / stateVisual / **typing（打字状态三张图：
+逐键交替 + 停手回第三张 + 再起打从图1 起）** / lock / todo / reminder /
 chat / anim / dragPhysics / snap / physOff / status / passthrough / picker / bg / menuClean / audio / rest /
 **learn（学习菜单：主菜单结构 + 番茄钟 + 计划表 + 语音设置）**。
 通过条件 = 全部断言成立 **且渲染层零 console.error**。UI 自动化不用 Playwright：测试模式
@@ -567,36 +585,41 @@ chat / anim / dragPhysics / snap / physOff / status / passthrough / picker / bg 
 它不弹窗、不碰鼠标、不需要麦克风与模型（模型用临时目录里的假文件），所以能进 `npm test` 日常跑。
 辅助变量：`PET_USERDATA`（userData 指到临时目录，隔离）、`PET_PET_PATH`（预置宠物，测试基建）、`PET_DEBUG`（主进程日志）。
 **跑 UI 场景时别碰鼠标**（会弹全屏置顶宠物窗，真实点击会干扰场景）。测试模式下随机特效动画不自动触发
-（由钩子手动驱动，防随机性污染场景）；眨眼仍按呼吸零点自动掷骰，但只动叠加层，不影响断言。
+（由钩子手动驱动，防随机性污染场景）；眨眼心跳照常跑（`blink` 场景要等一次真实的自动眨眼），
+但只动叠加层、不改判定，所以不影响别的场景断言；该场景自己会在精确断言前用 `setBlinkHeartbeat(false)` 暂停它。
 
 纯函数层文件：`config`（参数）、`util`（clamp + PNG 剥离色彩块）、`geom`（位图分析/像素命中/活动区域几何）、
-`motion`（手势判定/抛掷物理（碰撞盒）/弹簧呼吸/窗口吸附）、`status`（状态系统 + 双形态切换）、
-`blink`（眨眼帧清洗/概率/呼吸零点检测）、`content`（设置 schema + 待办 + 聊天规则 + 各模块偏好清洗入口）、
+`motion`（手势判定/抛掷物理（碰撞盒）/q 弹弹簧/窗口吸附）、`status`（状态系统 + 三形态枚举与轮换）、
+`blink`（眨眼帧清洗/播放概率）、**`typing`（打字状态：文本键白名单 + 逐键交替帧机 + 停手判定，时间注入可单测）**、
+`content`（设置 schema + 待办 + 聊天规则 + 各模块偏好清洗入口）、
 `english`（学英语：词书清洗/翻译判分/填空出题（真题优先+生成兜底，永不挖主语）/Leitner 间隔重复）、
 **`voice`（语音偏好清洗/唤醒词音素串/转写归一/PCM 分帧·RMS·端点判定）**、
 **`pomodoro`（番茄钟状态机/长休节奏/格式化）**、**`planner`（日期键/周视图/条目清洗/分组·进度·逾期）**、
 **`chat/`（ChatEngine 契约 + 注册表 + rule 引擎 + llm 占位）**。
 测试不能覆盖的（真弹原生菜单手感、真实出声、真鼠标穿透顺滑度、区域按钮实际改窗、25~30 分钟真实催促节奏、
-15~25 分钟真实特效节奏、多显示器、**真实麦克风识别率与唤醒误触发率**）须人工，见下方人工清单。
+15~25 分钟真实特效节奏、多显示器、**真实麦克风识别率与唤醒误触发率**、
+**打字状态的真实全局按键手感**（UI 场景在测试模式下不装真钩子，只验帧机与接线））须人工，见下方人工清单。
 
 ## 目录（精简后）
 
 ```
-src/shared/   纯逻辑、无 DOM/无 Electron（node:test 单测）→ config/util/geom/motion/status/blink/content/
+src/shared/   纯逻辑、无 DOM/无 Electron（node:test 单测）→ config/util/geom/motion/status/blink/typing/
               english/voice/pomodoro/planner + chat/(engine·rule·llm·sse)
 src/main/     main.js(PetApp 主进程) store.js(设置原子写盘) chatOrchestrator.js(文字+语音汇流)
               voiceService.js(语音进程生命周期/模型/权限/重试自愈/语音对话会话) voiceDiag.js(全链路诊断入口)
               llmSecret.js(密钥文件：明文独立文件，**在便携目录之外**) llmE2e.js(大模型端到端自检)
               chatLog.js(聊天记录：独立 json，同样在便携目录之外) userFile.js("用户级文件"路径解析，两处共用)
-              winenum.js(枚举/样式 C# exe) uiScenarios.js(UI 场景)
+              winenum.js(枚举/样式 C# exe) typing.js(打字状态探针：csc.exe 编译低级键盘钩子，只上报节拍)
+              uiScenarios.js(UI 场景)
 src/renderer/ app.js(宠物主窗) index.html boot.js + todo.* chat.* chatSettings.* english.*
               pomodoro.* planner.* voiceSettings.*(七个独立窗口) + asr.html/asr.js/pcm-worklet.js(隐藏语音进程)
 src/assets/   内置占位素材（火柴人，npm run assets:gen 生成）：pet.png(主图) blink.png(闭眼图) state.png(状态图)
+              type1.png·type2.png(打字两帧，随按键交替) type-idle.png(打字状态·不打字时)
 动画素材/      动画1、动画2（各三帧，随机特效动画默认素材；config.js effectAnim.groups 可改）
 tools/        gen-assets.js(占位素材生成器) spike-sherpa.js(语音自检) fetch-voice-model.js(模型按需下载)
-test/         unit/(18 文件，含 assets.test.js 素材一致性守卫、voice-wiring.test.js 主进程启动接线测试) smoke/ ui/(21 场景) fixtures/
+test/         unit/(19 文件，含 assets.test.js 素材一致性守卫、typing.test.js 打字状态帧机/探针、voice-wiring.test.js 主进程启动接线测试) smoke/ ui/(22 场景) fixtures/
 test/unit/voice-wiring.test.js  ← 用 electron 桩 boot 主进程，专抓"写好了但没接线"这类 bug
-data/         (运行时数据，gitignore：settings.json、assets/、winenum/、english/(词库+学习进度)、
+data/         (运行时数据，gitignore：settings.json、assets/、winenum/、typing/(打字探针 exe)、english/(词库+学习进度)、
               voice/models/(语音模型，约 160MB)、缓存)
 ~/.deskpet/   (★ 便携目录之外的两份"用户级文件"：llm.key 密钥、chat.json 聊天记录 ——
               拷走桌宠文件夹不会带走它们)
@@ -645,6 +668,14 @@ data/         (运行时数据，gitignore：settings.json、assets/、winenum/�
 - **P1.11 聊天记录**：聊几句 → 关掉聊天窗 → 再打开：**内容还在**（且开场白不会重复堆积）。
   确认 `~\.deskpet\chat.json` 存在、内容与界面一致，而**桌宠文件夹里搜不到聊天内容**；
   设置窗点「清空聊天记录」（点两下确认）→ 聊天窗立刻变空、再开窗也是空的。
+- **P1.12 打字状态（形态三，只能人工验）**：右键长按 →「切换状态」→ 应看到**三个**单选项，「打字状态」可选
+  （非 Windows 平台应置灰并写"（本平台不支持）"）。选中后桌宠应立刻换成**双手身前交叠**那张（不打字图）；
+  然后**切到任意程序**（记事本/浏览器/微信都行）连续打字 → 每按一下应在"双手在键盘上 / 右手抬起"之间换一次，
+  **停手 1 秒**回到交叠那张；再打一下应从"双手在键盘上"起（不是抬手帧）。同时确认：
+  ① 你正在打的程序**一个字符都不少**（探针只旁听不吞键）；② 只按 `Ctrl`/`Alt`/方向键/`F1~F12` **不该**触发打字；
+  ③ 切回「主宠物图」后 `data\typing\` 里的探针进程应消失（任务管理器搜 `keybeat-`，应查不到）；
+  ④ 隐藏宠物（托盘）时探针也应停；⑤ 中文输入法下打一整句（含选词上屏）应全程被认成在打字。
+  已知不覆盖：以管理员权限运行的程序里的按键（Windows 限制）。
 - **P2**：托盘全套；区域面板加减宽高实时生效、还原全工作区；隐藏即暂停（CPU 降）；
   **关掉应用过一夜再打开，情绪/饱食不该被算到 0**（"不在你面前时冻结"）；重启后
   一切还在（含待办/聊天规则/**聊天记录**/番茄钟时长/计划表/语音偏好/状态数值）；单实例；**拷走即用**（另目录/机器双击 .bat，

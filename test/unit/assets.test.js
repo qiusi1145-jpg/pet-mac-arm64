@@ -3,7 +3,8 @@
  * 内置占位素材的一致性守卫（火柴人，由 npm run assets:gen 生成）。
  *
  * 为什么常驻测：换形态、插眨眼帧、播特效帧都按"包围盒底边中点"对齐（app.js
- * setStateVisible / showFrameBody），素材本身只要脚底或中轴偏一点，切换就会原地跳位；
+ * applyBody / showFrameBody —— 打字状态三张图的交替也走 applyBody），素材本身只要脚底或
+ * 中轴偏一点，切换就会原地跳位；
  * 带色彩档案块则会让同像素的不同素材出现肉眼色差（见 util.js stripPngColorChunks）。
  * 这些都不是跑单测能顺带发现的，所以按文件锁死。
  */
@@ -19,16 +20,21 @@ const { CFG } = require('../../src/shared/config');
 const ROOT = path.join(__dirname, '..', '..');
 const A = (...p) => path.join(ROOT, ...p);
 
-/** 素材清单：三张主素材 + config.effectAnim 里的全部特效帧（路径与应用同源，不会各说各话）。 */
+/** 素材清单：三张主素材 + 形态三三张图（config.typing）+ config.effectAnim 的全部特效帧
+ *  （路径与应用同源，不会各说各话）。 */
 function builtinAssets() {
   const fx = [];
   for (const g of CFG.effectAnim.groups) {
     for (const f of g.frames) fx.push({ label: `${g.name}/${path.basename(f)}`, file: A('src', 'renderer', f) });
   }
+  const ty = (CFG.typing.frames || []).concat([CFG.typing.idleFrame]).map((f, i) => ({
+    label: `打字态${i < 2 ? `图${i + 1}` : '·不打字图'}`, file: A('src', 'renderer', f),
+  }));
   return [
     { label: '主图 pet.png', file: A('src', 'assets', 'pet.png') },
     { label: '状态图 state.png', file: A('src', 'assets', 'state.png') },
     { label: '眨眼图 blink.png', file: A('src', 'assets', 'blink.png') },
+    ...ty,
     ...fx,
   ];
 }
@@ -51,12 +57,15 @@ function chunkTypes(buf) {
   return types;
 }
 
-test('内置素材齐全：主图/状态图/眨眼图 + config 声明的每一帧特效', () => {
+test('内置素材齐全：主图/状态图/眨眼图 + 形态三三张图 + config 声明的每一帧特效', () => {
   for (const a of builtinAssets()) {
     assert.ok(fs.existsSync(a.file), `素材缺失：${a.label} → ${a.file}`);
     assert.ok(fs.statSync(a.file).size > 0, `素材为空文件：${a.label}`);
   }
   assert.ok(CFG.effectAnim.groups.length > 0, '特效组被清空会让 smoke 的 fxGroups>0 断言失去意义');
+  // 形态三的构成写死在这里：两张打字帧（随按键交替）+ 一张不打字图（停手后显示）
+  assert.equal(CFG.typing.frames.length, 2, '打字态必须恰好两张交替帧');
+  assert.equal(builtinAssets().length, 6 + CFG.effectAnim.groups.reduce((n, g) => n + g.frames.length, 0));
 });
 
 test('全部素材同画布、有可交互像素、脚底与中轴逐张对齐', () => {

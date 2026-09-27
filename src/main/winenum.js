@@ -200,4 +200,4 @@ function isSystemWindow(w) {
   return false;
 }
 
-module.exports = { WinEnum, isSystemWindow };
+module.exports = { WinEnum, isSystemWindow, findCsc };

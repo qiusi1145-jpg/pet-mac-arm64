@@ -32,6 +32,8 @@ const { ACCENTS, normalizeAccentPref } = require('../shared/uiTheme');
 const PS = require('../shared/pomodoroStats');          // 番茄钟学习记录/成就（纯函数）
 const pomoStatsStore = require('./pomodoroStatsStore'); // 同上，持久化（data/pomodoro-stats.json）
 const { WinEnum, isSystemWindow } = require('./winenum');
+const { TypingMonitor } = require('./typing');
+const { normalizeVisualMode } = require('../shared/status'); // 视觉形态枚举（与渲染层同一份定义）
 
 const PET_NAME = '桌宠';
 
@@ -177,7 +179,10 @@ class PetApp {
     this.voiceWin = null;         // 语音采集/识别进程宿主窗（隐藏；见 voiceService.js）
     this._englishBooks = {};      // 学英语词书内存缓存（level → book）
     this.englishRemindTimer = 0;  // 桌宠催背定时器
-    this.stateVisualOn = false;   // 当前形态：false=主宠物图，true=状态图（渲染层回传同步）
+    this.visualMode = 'main';     // 当前视觉形态：main=主宠物图 / state=状态图 / type=打字状态（渲染层回传同步）
+    // 打字监听（形态三）：只在 visualMode==='type' 且宠物可见时存在，切走即 kill（详见 src/main/typing.js）
+    this.typing = new TypingMonitor(this.userDataRoot);
+    this.typing.on('beat', () => this.send('typing:beat'));
     // 聊天编排器：文字（chatSend）与语音（voiceFinal）的唯一汇流点，内部走 ChatEngine 注册表
     this.orchestrator = new ChatOrchestrator(this);
     // 语音服务（识别进程生命周期 / 模型状态 / 降级）——见 voiceService.js；
@@ -626,8 +631,11 @@ class PetApp {
     // 区域调整（渲染层菜单触发）
     ipcMain.handle('region:resize', (_e, width, height) => this.resizeRegion(width, height));
 
-    // 状态图形态（渲染层应用后回传，供“切换状态”菜单单选项的勾选态）
-    ipcMain.on('state:visualSync', (_e, { useState }) => { this.stateVisualOn = !!useState; });
+    // 视觉形态（渲染层应用后回传，供"切换状态"菜单单选项勾选态 + 决定打字监听的启停）
+    ipcMain.on('state:visualSync', (_e, { mode }) => {
+      this.visualMode = normalizeVisualMode(mode);
+      this.syncTypingMonitor();
+    });
 
     // 窗口枚举（吸附）。list() 异步 spawn（不阻塞主进程事件循环），handle 自动等待 Promise。
     ipcMain.handle('enumerate:windows', async () => {
@@ -1644,6 +1652,17 @@ class PetApp {
 
   act(type, payload) { this.showIfHidden(); this.send('pet:action', payload ? { type, ...payload } : { type }); }
 
+  /**
+   * 形态三在跑才需要打字监听：切走形态 / 隐藏宠物 / 退出 → 立刻停探针，
+   * 系统里不留任何全局键盘钩子（探针只在 start..stop 之间存在）。
+   * TEST_MODE 不装真钩子：低级钩子读到的是全系统的按键，测试期间会把用户真人在打的字
+   * 也算成节拍，帧断言就没法确定；UI 场景改用 __petTest.typingBeat() 注入（同一条渲染路径）。
+   */
+  syncTypingMonitor() {
+    if (this.visualMode === 'type' && this.visible && !TEST_MODE) this.typing.start();
+    else this.typing.stop();
+  }
+
   /* --------- 主菜单文本/可见性（config.js 可定制；item 加 visible:false 即隐藏该项） --------- */
 
   menuLabel(id) {
@@ -1724,10 +1743,20 @@ class PetApp {
       self.menuItem('bgOp75', { type: 'radio', checked: bgOpacityPct === 75, click: () => self.send('bg:opacity', { opacity: 0.75 }) }),
       self.menuItem('bgOp100', { type: 'radio', checked: bgOpacityPct === 100, click: () => self.send('bg:opacity', { opacity: 1 }) }),
     ].filter(Boolean);
+    const typingOn = self.typing.available();
     const stateSub = [
-      // 两个单选项直达目标形态（勾选态 = 渲染层回传的当前形态）
-      self.menuItem('stateMain', { type: 'radio', checked: !self.stateVisualOn, click: () => self.send('state:visual', { useState: false }) }),
-      self.menuItem('stateAlt', { type: 'radio', checked: !!self.stateVisualOn, click: () => self.send('state:visual', { useState: true }) }),
+      // 三个单选项直达目标形态（勾选态 = 渲染层回传的当前形态）
+      self.menuItem('stateMain', { type: 'radio', checked: self.visualMode === 'main', click: () => self.send('state:visual', { mode: 'main' }) }),
+      self.menuItem('stateAlt', { type: 'radio', checked: self.visualMode === 'state', click: () => self.send('state:visual', { mode: 'state' }) }),
+      // 「打字状态」需要全局按键探针：本平台用不了就置灰（不能让用户"选了却没反应"），
+      // 文案直接说明原因 —— 与语音全局键注册失败时"如实回报"是同一条红线。
+      self.menuItem('stateType', {
+        type: 'radio',
+        checked: self.visualMode === 'type',
+        enabled: typingOn,
+        label: `${self.menuLabel('stateType')}${typingOn ? '' : '（本平台不支持）'}`,
+        click: () => self.send('state:visual', { mode: 'type' }),
+      }),
     ].filter(Boolean);
 
     return [
@@ -1848,6 +1877,7 @@ class PetApp {
     this.store.update({ visible: true }).saveSoon();
     if (this.win && !this.win.isDestroyed() && !this.win.isVisible()) this.win.show();
     this.win && this.win.webContents.send('app:visibility', { visible: true });
+    this.syncTypingMonitor();
     this.rebuildTray();
   }
 
@@ -1856,6 +1886,7 @@ class PetApp {
     this.store.update({ visible: false }).saveSoon();
     if (this.win && !this.win.isDestroyed()) this.win.hide();
     this.win && this.win.webContents.send('app:visibility', { visible: false });
+    this.syncTypingMonitor(); // 宠物不在眼前 → 探针也没意义，停掉
     this.rebuildTray();
   }
 
@@ -1888,6 +1919,9 @@ class PetApp {
     if (this.todoTimer) { clearInterval(this.todoTimer); this.todoTimer = 0; }
     if (this.reminderTimer) { clearTimeout(this.reminderTimer); this.reminderTimer = 0; }
     if (this.voice) { try { this.voice.shutdown(); } catch { /* 退出中 */ } }
+    // 打字探针必须显式停：全局键盘钩子不随主进程"打算退出"而消失，留着它等于退出后系统里
+    // 还挂着一个监听按键的子进程。
+    try { this.typing.stop(); } catch { /* 退出中 */ }
     this.abortLlmInflight('quit');   // 退出时别把在途请求吊在那儿
     // 全局键要显式注销：虽然进程退出时系统会回收，但留着不注销会让"重启后才生效"更难排查
     try { globalShortcut.unregisterAll(); } catch { /* 退出中 */ }
@@ -1931,6 +1965,8 @@ class PetApp {
           voice: this.store.get().voice,
           voiceAvailable: !!(this.voice && this.voice.status().available),
           visible: this.visible,
+          visualMode: this.visualMode,
+          typing: this.typing.status(), // { platform, available, running, error }
         }),
         // 主菜单结构（不弹窗）：{ id: [子项 id…] } 只含子菜单；便于断言"学习"一级菜单已就位
         mainMenu: () => this.buildMainMenuTemplate()

@@ -23,7 +23,7 @@
  * @property {ChatMessage[]} messages   已由编排器拼好（含历史与 systemPrompt）
  * @property {Object} [context]         只读快照，供引擎参考：
  *                                      { status:{mood,energy,satiety,affinity}, todos:[…],
- *                                        study:{level,rank,dueToday}, form:'main'|'alt',
+ *                                        study:{level,rank,dueToday}, form:'main'|'state'|'type',
  *                                        chatRules:[{keyword,reply}] }
  * @property {AbortSignal} [signal]     取消（用户关窗 / 再次说话）
  * @property {Object} [meta]            渠道细节：{ asrConfidence, durationMs, rawText }

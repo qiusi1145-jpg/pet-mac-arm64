@@ -1,6 +1,6 @@
 'use strict';
 /**
- * 动作与运动模型（纯函数，可单测）：手势判定 → 抛掷/坠落物理 → 弹簧(q弹/呼吸) → 窗口吸附。
+ * 动作与运动模型（纯函数，可单测）：手势判定 → 抛掷/坠落物理 → 弹簧(q 弹) → 窗口吸附。
  * 红线：阈值全来自 config；物理只在“抛掷释放”与“失去支撑坠落”运行；普通拖动是 1:1
  * 跟随、绝不经过这里的积分；抛掷反弹后宠物必须始终留在活动区域内。
  */
@@ -185,7 +185,7 @@ function simulate(events, { untilT, opts } = {}) {
   return out;
 }
 
-/* ================= 果冻动画（弹簧 / 呼吸） ================= */
+/* ================= 果冻动画（q 弹弹簧） ================= */
 
 /** 无参数版本（直接用 config 的 q 弹弹簧）——供 renderer 复用同一套常数。 */
 function springParams() {
@@ -214,19 +214,6 @@ function integrateSpring({ s, v }, dt, { w0, damp }) {
 /** 冲量：给弹簧注入初速度（正值=放大即拉伸、负值=压缩）。 */
 function impulse(st, amount) {
   return { s: st.s, v: st.v + amount };
-}
-
-/**
- * 待机呼吸：围绕锚点的慢速果冻缩放。
- * 返回 (x, y) 缩放；幅度由 opts.amplitude ?? CFG.anim.breatheAmplitude（默认 ±1.5%）。
- */
-function breathe(tMs, opts = {}) {
-  const A = opts.amplitude ?? CFG.anim.breatheAmplitude;
-  const T = opts.periodMs ?? CFG.anim.breathePeriodMs;
-  const ph = opts.phaseMs ?? 0;
-  const x = 1 + A * Math.sin(((tMs + ph) / T) * 2 * Math.PI);
-  const y = 1 + A * Math.sin(((tMs + ph) / T) * 2 * Math.PI + 1.2); // y 稍滞后，带点“蠕动”感
-  return { x, y };
 }
 
 /* ================= 物理（抛掷 / 坠落） =================
@@ -391,7 +378,6 @@ module.exports = {
   springParams,
   integrateSpring,
   impulse,
-  breathe,
   step,
   atRest,
   normCol,

@@ -56,7 +56,7 @@ const scenarios = {
 
     const results = [];
 
-    // 基线：弹簧静止归 1（读弹簧 sy；绘制缩放=弹簧×呼吸，呼吸另测）
+    // 基线：弹簧静止归 1（待机不再有任何缩放）
     const base = await js('window.__petState().animScale.sy');
     results.push({ name: '基线弹簧 sy≈1', ok: Math.abs(base - 1) < 0.03 });
 
@@ -65,20 +65,20 @@ const scenarios = {
     let minSy = 1;
     for (let i = 0; i < 14; i++) {
       await sleep(45);
-      const s = await js('window.__petState().animScale.drawnSy');
+      const s = await js('window.__petState().animScale.sy');
       if (s < minSy) minSy = s;
     }
     results.push({ name: `摸头压缩明显(min=${minSy.toFixed(3)}<0.95)`, ok: minSy < 0.95 });
 
-    // 一段时间后弹簧收敛回 1（动画没有失控/停止）；呼吸是独立叠加波，不干扰此判断
+    // 一段时间后弹簧收敛回 1（动画没有失控/停止）
     await sleep(2400);
     const after = await js('window.__petState().animScale.sy');
     results.push({ name: `Q弹弹簧收敛回 1(|${after.toFixed(3)}-1|<0.04)`, ok: Math.abs(after - 1) < 0.04 });
 
-    // 待机呼吸在动：采一个整周期以上（满周期必含一个波峰+波谷 → 跨幅≈2A）
+    // 待机彻底静止：原"呼吸在动"断言的反向版本 —— 呼吸波删掉后，静止人物不该再有任何缩放起伏
     let lo = 1, hi = 1;
-    for (let i = 0; i < 48; i++) { await sleep(100); const v = await js('window.__petState().animScale.drawnSy'); lo = Math.min(lo, v); hi = Math.max(hi, v); }
-    results.push({ name: `呼吸在动(hi-lo=${(hi - lo).toFixed(4)} 期望≈0.03)`, ok: hi - lo > 0.02 });
+    for (let i = 0; i < 30; i++) { await sleep(50); const v = await js('window.__petState().animScale.sy'); lo = Math.min(lo, v); hi = Math.max(hi, v); }
+    results.push({ name: `待机无任何缩放(hi-lo=${(hi - lo).toFixed(6)} 期望 0)`, ok: hi - lo < 1e-6 });
 
     // 状态胶囊折叠/展开
     await js('document.getElementById("pill").click()');
@@ -91,12 +91,14 @@ const scenarios = {
   },
 
   /** 眨眼：视觉层闭眼图可显示/隐藏，且判定区域不因此变化；
-   *  降级单图眨眼走真实播放路径（整帧接管本体 → 播完恢复，时长来自 blink.zeroFrameMs）。 */
+   *  降级单图眨眼走真实播放路径（整帧接管本体 → 播完恢复，时长来自 blink.frameMs）；
+   *  最后打开随机心跳，等一次"没人调用"的自动眨眼。 */
   async blink(ctx) {
     const { js } = ctx;
     await waitFor(js, 'window.__petReady && window.__petState().petLoaded', 12000, 'renderer ready + pet');
     const r = await js(`(() => {
       const T = window.__petTest;
+      T.setBlinkHeartbeat(false);   // 前两段要精确断言，先停掉随机心跳
       const s = T.state();
       const p = s.pet;
       let hit = null;
@@ -118,7 +120,7 @@ const scenarios = {
     })()`);
     if (!(r.visible && r.hidden && r.hitWhileVisible === true && r.hitWhileHidden === true)) return false;
 
-    // 降级单图眨眼（真实播放路径）：起播 → 本体隐藏、叠加显示 → ~zeroFrameMs 后恢复本体
+    // 降级单图眨眼（真实播放路径）：起播 → 本体隐藏、叠加显示 → ~frameMs 后恢复本体
     const seq = await js(`(async () => {
       const T = window.__petTest;
       const started = T.playBlinkAnim();
@@ -136,11 +138,12 @@ const scenarios = {
     if (!(seq && seq.started === true && seq.playingMid === true && seq.bodyHidden === true &&
       seq.blinkShown === true && seq.done === true && seq.bodyBack === true && seq.blinkHidden === true)) return false;
 
-    // 自动触发链路（呼吸零点 → zeroChance 掷骰 → 播 blinkBody）：这段 2026-09-10 起被注释关闭过，
-    // 期间没有任何测试变红 —— 所以这里必须真的等到一次"没人调用"的眨眼，而不是只测播放机制。
+    // 自动触发链路（blink.min~maxIntervalMs 心跳 → 播 blinkBody）：这段 2026-09-10 起被注释关闭过，
+    // 期间没有任何测试变红 —— 所以必须真的等到一次"没人调用"的眨眼，而不是只测播放机制。
     const auto = await js(`(async () => {
       const T = window.__petTest;
-      for (let i = 0; i < 300; i++) {   // 12s：呼吸周期 4.2s（≈每 2.1s 一个零点）× 90% 概率，等不到就是真没接上
+      T.setBlinkHeartbeat(true);
+      for (let i = 0; i < 400; i++) {   // 16s：最长间隔 8s + 余量，等不到就是心跳没接上
         if (T.state().blinkPlaying) return { ok: true };
         await new Promise((r2) => setTimeout(r2, 40));
       }
@@ -221,7 +224,8 @@ const scenarios = {
   },
 
   /** 状态切换 = 换一具身体：状态形象有自己的位图/锚点/尺寸，判定等一切随当前身体走；
-   *  切换保持底边中点位置连续（原地换装）；闭眼图属于主形象 → 状态形态不眨眼；不影响状态数值。 */
+   *  切换保持底边中点位置连续（原地换装）；闭眼图属于主形象 → 非主形态不眨眼；不影响状态数值。
+   *  三态改造后这里验"主 ↔ 状态"直达（打字态另有 typing 场景）。 */
   async stateVisual(ctx) {
     const { js } = ctx;
     await waitFor(js, 'window.__petReady && window.__petState().petLoaded', 12000, 'renderer ready + pet');
@@ -242,36 +246,108 @@ const scenarios = {
       const s0 = T.state();
       const hit0 = findHit();
       const bc0 = bottomCenter();
-      const shown = T.toggleStateVisual();
+      const shownMode = T.setVisualMode('state');
       const st1 = T.state();
       const bc1 = bottomCenter();
       const hit1 = findHit();
-      const blinkSuppressed = (() => {        // 闭眼图属于主形象 → 状态形态不眨眼
+      const blinkSuppressed = (() => {        // 闭眼图属于主形象 → 非主形态不眨眼
         T.forceBlink(true);
         const suppressed = document.getElementById('blink').style.display !== 'block';
         T.forceBlink(false);
         return suppressed;
       })();
       const status1 = st1.status;
-      const hiddenAgain = !T.toggleStateVisual();
+      const backMode = T.setVisualMode('main');
       const st2 = T.state();
       const bc2 = bottomCenter();
       const hit2 = findHit();
       const status2 = st2.status;
-      return { status0: s0.status, shown, visible: st1.stateVisualVisible, bodyKind: st1.bodyKind,
+      return { status0: s0.status, shownMode, mode1: st1.visualMode, bodyKind: st1.bodyKind,
         stateBodyReady: st1.stateBodyReady, bc0, bc1, hit1, blinkSuppressed, status1,
-        hiddenAgain, bodyBack: st2.bodyKind, visibleBack: st2.stateVisualVisible, bc2, hit0, hit2, status2 };
+        backMode, mode2: st2.visualMode, bodyBack: st2.bodyKind, bc2, hit0, hit2, status2 };
     })()`);
     const near = (a, b, eps = 1.5) => Math.abs(a - b) <= eps;
     const sameStatus = (a, b) => a && b &&
       a.mood === b.mood && a.energy === b.energy && a.satiety === b.satiety && a.affinity === b.affinity;
-    return r.shown === true && r.visible === true && r.stateBodyReady === true && r.bodyKind === 'state' &&
+    return r.shownMode === 'state' && r.mode1 === 'state' && r.stateBodyReady === true && r.bodyKind === 'state' &&
       near(r.bc1.b, r.bc0.b) && near(r.bc1.cx, r.bc0.cx) &&          // 底边中点连续（原地换装）
       !!r.hit0 && !!r.hit1 && !!r.hit2 &&                            // 两种形态都可命中（判定随身体走）
       r.blinkSuppressed === true &&
-      r.hiddenAgain === true && r.visibleBack === false && r.bodyBack === 'main' &&
+      r.backMode === 'main' && r.mode2 === 'main' && r.bodyBack === 'main' &&
       near(r.bc2.b, r.bc0.b) && near(r.bc2.cx, r.bc0.cx) &&          // 切回位置仍连续
       sameStatus(r.status1, r.status0) && sameStatus(r.status2, r.status0); // 切形态不动状态数值
+  },
+
+  /** 形态三（打字状态）三张图：进入即显示"不打字"图（图3）；每注入一次打字节拍在图1/图2
+   *  之间交替一次；停手超过阈值回到图3，且**再按一下必须从图1 起**（相位复位）。
+   *  节拍由 __petTest.typingBeat() 注入 —— TEST_MODE 下主进程不装真键盘钩子（低级钩子会读到
+   *  机器上真人在打的字，断言就没法确定），钩子本身另由 tools 侧的真机验证 + typing.test.js
+   *  的纯函数/探针源码断言覆盖。 */
+  async typing(ctx) {
+    const { js, sleep, mainState, mainMenu } = ctx;
+    // 入口先验：「切换状态」子菜单必须是三项（用户能不能选到形态三，全看这一项）
+    const stateSub = (mainMenu().find((m) => m.id === 'state') || {}).children || [];
+    if (stateSub.join(',') !== 'stateMain,stateAlt,stateType') {
+      console.error('[typing] 主菜单「切换状态」子项不对：', stateSub.join(','));
+      return false;
+    }
+    await waitFor(js, 'window.__petReady && window.__petState().petLoaded', 12000, 'renderer ready + pet');
+    const ready = await js('window.__petState().typingReady');
+    if (!ready || ready.frames !== 2 || !ready.idle) {
+      console.error('[typing] 形态三素材未就位（frames/idle 缺失），场景无意义');
+      return false;
+    }
+    // 阈值调短到 300ms：场景不必死等 config 的 1s（1s 这条默认值由 typing.test.js 锁死）
+    await js('window.__petTest.setTypingIdleMs(300)');
+    const r = await js(`(() => {
+      const T = window.__petTest;
+      const bc = () => { const p = T.state().pet; return { b: p.y + p.h, cx: p.x + p.w / 2 }; };
+      const s0 = T.state(); const bc0 = bc();
+      const mode0 = s0.visualMode;
+      const got = T.setVisualMode('type');
+      const s1 = T.state(); const bc1 = bc();
+      const blinkSuppressed = (() => {
+        T.forceBlink(true);
+        const ok = document.getElementById('blink').style.display !== 'block';
+        T.forceBlink(false);
+        return ok;
+      })();
+      return { mode0, got, mode1: s1.visualMode, body1: s1.bodyKind, frame1: s1.typingFrame,
+        bc0, bc1, blinkSuppressed };
+    })()`);
+    // 三下按键（间隔 > minFlipMs=50 才会真翻帧）→ 帧号必须是 0,1,0
+    const frames = [];
+    for (let i = 0; i < 3; i++) {
+      frames.push(await js('window.__petTest.typingBeat()'));
+      await sleep(70);
+    }
+    await sleep(80);
+    const mid = await js('window.__petState()');
+    await sleep(360); // 停手越过 300ms 阈值
+    const after = await js(`(() => { const s = window.__petState();
+      return { frame: s.typingFrame, body: s.bodyKind, bc: { b: s.pet.y + s.pet.h, cx: s.pet.x + s.pet.w / 2 } }; })()`);
+    const again = await js('window.__petTest.typingBeat()');   // 再起打 → 必须从图1（帧 0）
+    await sleep(120); // 等 visualSync 回到主进程
+    const msType = mainState();
+    const back = await js(`(() => { const T = window.__petTest;
+      const m = T.setVisualMode('main'); const s = T.state();
+      return { m, body: s.bodyKind, frame: s.typingFrame, mode: s.visualMode }; })()`);
+    await sleep(120);
+    const msBack = mainState();
+    const near = (a, b, eps = 1.5) => Math.abs(a - b) <= eps;
+    return r.mode0 === 'main' && r.got === 'type' && r.mode1 === 'type' &&
+      r.body1 === 'typeIdle' && r.frame1 === -1 &&                    // 进形态三先显示第三张图
+      near(r.bc1.b, r.bc0.b) && near(r.bc1.cx, r.bc0.cx) &&           // 换图原地不动
+      r.blinkSuppressed === true &&
+      frames.join(',') === '0,1,0' && mid.typingFrame === 0 &&        // 逐键交替（第三下回到图1）
+      near(mid.pet.y + mid.pet.h, r.bc0.b) &&
+      after.frame === -1 && after.body === 'typeIdle' &&              // 停手 → 第三张图
+      near(after.bc.b, r.bc0.b) && near(after.bc.cx, r.bc0.cx) &&
+      again === 0 &&                                                  // 再起打从图1 起
+      msType.visualMode === 'type' &&
+      msType.typing && msType.typing.running === false &&             // 测试模式不装真钩子
+      back.m === 'main' && back.mode === 'main' && back.body === 'main' && back.frame === -1 &&
+      msBack.visualMode === 'main' && msBack.typing.running === false;
   },
 
   /**
