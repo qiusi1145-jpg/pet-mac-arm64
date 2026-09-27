@@ -146,7 +146,9 @@ function startMockServer(expectedKey) {
 /** 主入口：传入已 init 的真实 PetApp。 */
 async function runLlmE2e(app) {
   const phase = String(process.env.PET_LLM_E2E_PHASE || '1');
-  const expectedKey = String(process.env.PET_LLM_E2E_KEY || '');
+  // 内置 mock 服务不校验密钥内容，所以自检**不需要真密钥**（README 的口径）：给一个固定假值，
+  // 否则 expectedKey 为空串 → llmSecret.set('') 返回 code=empty → "保存密钥/已配置密钥"两项必红。
+  const expectedKey = String(process.env.PET_LLM_E2E_KEY || 'sk-e2e-local-mock-key-0123456789');
   const log = (...a) => console.log('[llm-e2e]', ...a);
   const mock = await startMockServer(expectedKey);
   log(`mock 服务已起：${mock.baseUrl}（phase=${phase}）`);
