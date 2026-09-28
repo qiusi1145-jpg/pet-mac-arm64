@@ -35,6 +35,15 @@ echo "########## 桌宠 mac 打包：$ARCH ##########"
 echo "源目录: $ROOT"
 echo "产出:   $OUT"
 
+# ---------- 0. 先构建打字探针 ----------
+# 必须在装配**之前**：build-mac-helper.sh 把产物放在源树的 src/main/mac/keybeat，
+# 装配靠整目录拷贝带上它 —— 先拷后编的话分发包里根本没有探针（实测踩过，
+# 用户机上形态三会静默置灰）。也必须在签名之前，否则签名扫不到它。
+echo ""; echo "===== [0] 构建打字探针 keybeat ====="
+sh tools/build-mac-helper.sh --force || die "打字探针编译失败（形态三在 mac 上会置灰）"
+[ -f src/main/mac/keybeat ] || die "编译后源树里仍没有 src/main/mac/keybeat"
+ok "探针已就位（源树）"
+
 # ---------- 1. 装配 ----------
 # 只带运行需要的东西。刻意不带：node_modules（下面重装）、data（用户数据，首启自动建）、
 # out、.git、测试报告、语音模型（161MB，缺模型时应用按设计优雅隐藏语音）。
@@ -62,12 +71,15 @@ ok "Electron 主程序就位：$(file "$EB" | sed 's/.*: //')"
 chmod +x "$OUT"/*.command 2>/dev/null
 ok "启动器可执行位已置"
 
-# ---------- 1.5 构建 macOS 打字探针（形态三）----------
-# 必须在签名**之前**：它是随包分发的可执行文件，漏签就等于在 M2 上放一颗必崩的雷。
-echo ""; echo "===== [1.5] 构建打字探针 keybeat ====="
-sh tools/build-mac-helper.sh --force || die "打字探针编译失败（形态三在 mac 上会置灰）"
-[ -f "$OUT/src/main/mac/keybeat" ] || die "打包目录里没有 keybeat（装配漏了 src/main/mac）"
-ok "打字探针已随包就位"
+# ---------- 1.5 确认探针真的进了分发包 ----------
+# ⚠ 这里原来写成「die() 之后仍然无条件打印 ✓」—— 自己造了个假绿灯，正是本脚本反对的东西。
+#   成功/失败必须走同一个 if 的两个分支，不许在断言之后直接说"通过"。
+echo ""; echo "===== [1.5] 探针是否随包就位 ====="
+if [ -f "$OUT/src/main/mac/keybeat" ]; then
+  ok "分发包内含打字探针：src/main/mac/keybeat"
+else
+  die "分发包里没有 src/main/mac/keybeat —— 形态三在用户机上会静默置灰"
+fi
 
 # ---------- 3. ad-hoc 签名 ----------
 echo ""; echo "===== [3] ad-hoc 签名（codesign -s -）====="
