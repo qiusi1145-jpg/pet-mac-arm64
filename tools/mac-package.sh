@@ -176,7 +176,9 @@ if [ "$FAILED" -eq 0 ]; then
   echo ""
   echo "分发前请注意（写给用户）："
   echo "  · 让用户放到 ~/桌宠 这类路径，**别放桌面/文档**（iCloud 同步会破坏签名 → 报「已损坏，无法打开」）"
-  echo "  · 首次双击若被 Gatekeeper 拦：系统设置 → 隐私与安全性 → 「仍要打开」（一次性）"
+  echo "  · 首次双击若被 Gatekeeper 拦：**别写「系统设置 → 仍要打开」** —— 那套放行只对 .app/安装包"
+  echo "    生效，我们的启动器是 .command，实测被拦后只有「完成/移到废纸篓」（见 macOS移植方案.md §12.5.1）。"
+  echo "    可行做法：用网盘/微信传（不打隔离标记），或让用户跑 xattr -dr com.apple.quarantine <文件夹>"
   echo "  · 用微信/QQ 传文件通常不加隔离属性，用户完全无感"
   [ "$ARCH" != "$(uname -m)" ] && echo "  ⚠ 本机是 $(uname -m)，这份是给 $ARCH 的，本机跑不了 —— 拿去对应架构的机器上验"
   exit 0

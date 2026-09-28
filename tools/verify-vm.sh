@@ -129,18 +129,24 @@ else
   file -b "$HB" | grep -q Mach-O && say "✓ 探针是 Mach-O：$(file -b "$HB" | cut -c1-46)" || say "❌ $HB 不是可执行 Mach-O"
   codesign --verify "$HB" >/dev/null 2>&1 && say "✓ 探针已签名（arm64 上无签名会被内核杀）" \
     || say "⚠ 探针未签名 —— 分发包里必须由 mac-package.sh 补签"
-  # 信任状态如实打印：未授权是环境状态，不是代码 bug，所以不判失败，但必须看得见
-  cat > /tmp/axcheck.js <<'JSEOF'
+  # 信任状态如实打印：未授权是环境状态，不是代码 bug，所以不判失败，但必须看得见。
+  # 临时脚本必须放独立目录并用完就删：留在 /tmp/axcheck.js 会让 Electron 把命令行参数
+  # `/tmp/axcheck`（目录）按"先文件后目录"的规则解析成这个残留脚本 —— 实测跑出来一个
+  # 莫名其妙的 "trusted"，查了半天以为探针没起来，其实是别人的输出。
+  AXDIR=$(mktemp -d)
+  cat > "$AXDIR/axcheck.js" <<'JSEOF'
 const { app, systemPreferences } = require('electron');
 app.whenReady().then(() => {
   console.log(systemPreferences.isTrustedAccessibilityClient(false) ? 'trusted' : 'untrusted');
   app.exit(0);
 });
 JSEOF
-  TRUST=$(./node_modules/.bin/electron /tmp/axcheck.js 2>/dev/null | grep -aoE 'trusted|untrusted' | tail -1)
+  TRUST=$(./node_modules/.bin/electron "$AXDIR/axcheck.js" 2>/dev/null | grep -aoE 'trusted|untrusted' | tail -1)
+  rm -rf "$AXDIR"
   say "辅助功能信任：${TRUST:-查询失败}（untrusted 时事件不会到达且不报错，菜单会显示「需授权辅助功能」）"
-  # ⚠ 这里**不**用 osascript 合成按键：SSH 会话下 System Events 起不来、会整段挂死
-  #   （实测踩过）。真人按键验证走 tools/typing-live-test.sh，需要人配合，所以不并进自动流程。
+  # ⚠ 这里**不**合成按键：SSH 会话下 System Events 起不来、整段挂死；换成 CGEventPost
+  #   直投 HID 层也不报错但**一个节拍都收不到**（实测过），因为 SSH 进程不在窗口服务器
+  #   会话里。真人按键验证走 tools/typing-live-test.sh，需要人配合，所以不并进自动流程。
   if [ "${LIVE_TYPING:-0}" = "1" ]; then
     say "-- LIVE_TYPING=1：跑真人按键验证（接下来 15 秒请在虚拟机里连续敲 10 下以上键）--"
     sh tools/typing-live-test.sh 18 >> "$OUT/raw.log" 2>&1 \

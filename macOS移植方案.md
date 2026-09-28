@@ -403,10 +403,14 @@ Apple Silicon 上内核 + AMFI **强制要求所有 Mach-O 有有效签名**，�
 VM 里出 x86_64 包，并**对分发包本身**（不是开发树）跑完整验证：
 
 ```
-310 单测（308 通过 / 2 平台反向跳过 / 0 失败）· SMOKE_OK · UI_ALL_PASS ×2（含 devicePixelRatio=2）
-✓ 全部 Mach-O 签名有效（共扫描 19 个）· ✓ Electron.app 递归严格校验通过
+319 单测（317 通过 / 2 平台反向跳过 / 0 失败）· SMOKE_OK · UI_ALL_PASS ×2（含 devicePixelRatio=2）
+✓ 全部 Mach-O 签名有效（共扫描 20 个）· ✓ Electron.app 递归严格校验通过
 ✓ 包内无隔离属性残留 · ✅ verify-vm.sh 全部通过
 ```
+
+> ⚠ 上面这块是**验收清单**，不是"每次都全绿"的存档。2026-09-29 为查形态三重出的
+> x86_64 包目前只跑到：签名 20/20 ✓、包内 L1 单测 317 通过 / 0 失败 ✓；
+> L2 smoke 与 L3 UI 还没在这份新包上重跑（它们会抢单实例锁，必须等宠物退出后再跑）。
 
 **M2 出包**：在 Apple Silicon 机器上直接 `sh tools/mac-package.sh`（默认按本机架构出 arm64）。
 交叉出包（在 Intel/VM 上 `sh tools/mac-package.sh arm64`）能产出**结构正确但从未运行过**的包，
@@ -415,10 +419,40 @@ VM 里出 x86_64 包，并**对分发包本身**（不是开发树）跑完整�
 ### 12.5 写给最终用户的话（发版时随包附上）
 
 - 放到 `~/桌宠` 这类路径，**别放桌面 / 文档** —— iCloud 同步会改文件、破坏签名，症状正是"已损坏，无法打开"。
-- 首次双击若被拦：**系统设置 → 隐私与安全性 → 拉到底点「仍要打开」**，一次性。
+- 首次双击若被拦：**别照"系统设置 → 仍要打开"写给用户** —— 那条只对 `.app` / 安装包成立，
+  我们的启动器是 `.command`，实测被拦后没有任何 GUI 放行入口，见 §12.5.1。
 - 用微信 / QQ 传这个文件夹通常不加隔离属性，用户完全无感；浏览器下载才需要走上一条。
 - ⚠ 若启用语音：**ad-hoc 的 Designated Requirement 绑在具体那份代码哈希上**（Apple TN3127 原文），
   所以每次更新后麦克风授权会重新询问一次。**不用语音就没有这个代价。**
+
+#### 12.5.1 补充实测（2026-09-29）：`.command` 被隔离时**没有**「仍要打开」
+
+VM 里给 `启动桌宠.command` 手工加上 `com.apple.quarantine` 后，双击弹的是截图那种
+**只有「完成 / 移到废纸篓」两个按钮**的框。命令行侧的实测判定：
+
+```
+spctl -a -vvv 启动桌宠.command   →  rejected / source=no usable signature   （要等约 6 分钟才返回）
+open          启动桌宠.command   →  _LSOpenURLsWithCompletionHandler() failed with error -128
+xattr 文件                          →  com.apple.quarantine 依然在（被拒不会清掉属性，重试还是同样结果）
+```
+
+查 Apple 官方《在 Mac 上安全地打开 App》(support/102445)：这套放行机制的适用对象写的是
+**"Mac App、插件和安装器软件包"** —— 纯脚本不在其中，所以 §12.5 第二条那句"点仍要打开"
+**对 `.command` 不成立**，别照它写给用户。
+
+用户侧真正可用的三条路（按省事程度排）：
+1. **传输方式避开隔离属性**：微信 / QQ / 网盘分享链接、AirDrop 都不打 quarantine 标记；
+   浏览器下载（Safari/Chrome）会打。发版时把"请用网盘/微信传，不要放浏览器直链"写进说明。
+2. **一行命令清掉**（对已隔离的文件夹最有效，也是唯一对所有文件类型都成立的）：
+   `xattr -dr com.apple.quarantine ~/桌宠-mac-arm64`
+3. **改成 `.app` 外壳**（把启动脚本塞进 `桌宠.app/Contents/MacOS/`）——这样才落到 Apple 那套
+   "App" 的适用范围里，「仍要打开」和右键→打开都能用。**代价**：要走 `.app` 就得处理
+   bundle 结构 / Info.plist / 图标，且 TCC 授权项会从 "Electron" 变成正式应用名（更干净）。
+   目前**没有**做，需要用户拍板（见 §8 待确认项）。
+
+`tools/mac-package.sh` 第 [4] 步仍然清隔离属性 —— 它保证的是**出包这一侧**不带隔离，
+传输那一侧加回来的不在它管辖范围内。
+
 
 ---
 
@@ -450,7 +484,9 @@ mac 侧改判"字符"而非"VK 码"（macOS 键码随布局变），用 `CGEvent
 ### 13.3 权限与置灰（三态，不静默）
 
 `available()` 只看"helper 在不在"是**不够的**——未授权时事件不来且系统不报错。
-所以菜单标签三态：`（本平台不支持）` / `（需授权辅助功能）` / 正常。
+所以菜单标签三态：`（缺 csc.exe）` / `（探针文件缺失）` / `（本平台不支持）` / `（需授权辅助功能）` / 正常。
+原因文案由 `TypingMonitor.unavailableReason()` 单一给出（菜单置灰用 `available()`，
+两者由单测锁死为同一判断），不再把"包没打全"和"平台不支持"混成一句。
 探针在但缺权限时**保持可点**，点它是去弹系统授权框引导，而不是静默切过去。
 
 ### 13.4 复验方式
@@ -461,12 +497,42 @@ VM 里 `osascript ... keystroke` 在 SSH 会话下会整段挂死（System Event
 主进程拉起，不存在这个限制。所以 `verify-vm.sh` 第 8 段默认只做静态检查 + 信任状态如实回报，
 真人节拍验证要显式 `LIVE_TYPING=1`。
 
-### 13.5 一个待你拍板的既有不一致
+2026-09-29 补：换 `CGEventPost(kCGHIDEventTap, …)` 直投 HID 层**也不行** —— 不报错、
+`POSTED=20` 全成功，但探针收到 0 个节拍。原因同上：SSH 进程不在窗口服务器会话里。
+所以"SSH 下敲不到键"永远是环境结论，不能拿来判探针好坏。
 
-`shared/typing.js` 注释写着"Ctrl/Alt/Shift/Win 单按**与组合**一律不算打字"，但 Windows 探针
-只拿得到 `vkCode`、看不到修饰键状态 → **按 Ctrl+C 在 Windows 上会被算成打了一字**（只有单按
-Ctrl 被排除）。注释与实现本来就不一致，不是移植引入的。
+### 13.5 修饰键口径（已定案，不再是待拍板项）
 
-新写的 mac 探针按注释的**意图**做了（Ctrl/Alt/Cmd 组合不算），所以两平台现在行为有差异。
-三个选项：① 改 Windows 探针加 `GetKeyState` 查修饰键（最干净，需 Windows 侧真机验证）；
-② 改 mac 探针跟 Windows 一致（两边一致但都违背注释）；③ 保持现状并把这个差异写进注释。
+用户 2026-09-28 选 ①：Windows 探针加 `GetAsyncKeyState` 查 Ctrl/Alt/Win（用异步态，
+因为低级钩子回调里本线程按键状态**尚未更新**），与 mac 侧的 `kCGEventFlagMask*` 判定对齐。
+Shift 仍算打字（Shift+A 就是在打 A）。两平台一致性由 `test/unit/typing.test.js` 的
+"两边都排除 Ctrl/Alt/Cmd"穷举断言守着。
+
+## 14. 事故记录：形态三"打字没反应"= 用户跑的是旧包（2026-09-29）
+
+**现象**：VM 里选/试「打字状态」，两张打字帧始终不出现。
+
+**取证**（不猜，先看进程和文件）：
+- `ps -o pid,lstart,command` → 在跑的是 `~/deskpet/dist/桌宠-mac-x86_64`，**21:33 启动**；
+- 该目录 21:27 装配，而形态三 mac 探针是 23:36 的 `c36a67b` 才落地；
+- 包里 `src/main/mac/` **整个目录不存在**，`src/main/typing.js` 还是
+  `unsupported-platform(darwin)` 的版本 → `available()` 恒 false → 菜单项置灰。
+即：**代码没问题，是启动错了文件夹**（`~/deskpet` 是早期同步的旧树，`~/macfinal` 才是当前树）。
+
+**顺带查清的两件事**：
+1. 当前包的探针链路实测是通的：用生产模块 `src/main/typing.js` 起一次性 Electron 宿主，
+   `AX_MAIN=true / available=true / start=true / probeTrusted=true` —— helper 由 Electron
+   拉起时同样拿到「辅助功能」信任（与 Terminal 单独跑探针是两条不同的 TCC 归属，必须分开验）。
+2. 差点被带偏：`verify-vm.sh` 在 `/tmp/axcheck.js` 留了个残留脚本，Electron 解析命令行
+   参数时"先文件后目录"，于是 `Electron /tmp/axcheck`（我的测试目录）跑的是那个残留脚本，
+   打出一行莫名的 `trusted`。已改成 `mktemp -d` + 用完即删。
+
+**修掉的三个真实缺陷**（都不是"探针收不到键"，但都是这次查不下去的原因）：
+- `启动桌宠.command` 把 stdout/stderr 丢进 `/dev/null` → 现在落 `./data/launch.log`；
+  探针起不来、语音起不来这类"不弹错"的问题只有这里有留痕。
+- `unavailableReason()` 区分「探针文件缺失」与「本平台不支持」（见 §13.3）。
+- `verify-vm.sh` 的临时脚本残留（见上）。
+
+**给分发流程加的规矩**：出包后**只保留一个** `dist/桌宠-mac-<arch>`，旧的直接删；
+否则用户（和我）会误启动旧包，而旧包的表现和新包 bug 的表现一模一样。
+

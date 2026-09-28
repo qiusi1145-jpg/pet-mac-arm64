@@ -8,8 +8,9 @@
  *    与 winenum.js 同一条"零原生依赖"路子（不引入任何 npm 原生模块）。
  *  - darwin：跑**构建期预编译**的 ObjC 探针 src/main/mac/keybeat（macOS 没有系统自带编译器，
  *    "运行期现编"这招不成立，所以 helper 必须随包分发并纳入 ad-hoc 签名）。
- *    它用 `addGlobalMonitorForEvents` —— 全局监控器按定义只能观察、不能拦截，
- *    所以"绝不吞键"这条在 mac 上是**结构上成立**的，比 Windows 靠写对 CallNextHookEx 更稳。
+ *    它用只读 `CGEventTap`（不是 addGlobalMonitorForEvents —— 实测后者在本机收不到任何事件，
+ *    见 macOS移植方案.md §13）。只读按定义只能观察、不能拦截，所以"绝不吞键"这条在 mac 上
+ *    是**结构上成立**的，比 Windows 靠写对 CallNextHookEx 更稳。
  *    ⚠ 未授予「辅助功能」时事件不会到达**且不报错**，所以可用性判定必须查权限，
  *      不能等用户选了形态三才发现没反应（主进程负责引导授权，见 main.js 的菜单标签）。
  *  - 其它平台：available() 返回 false —— 菜单项直接置灰，不做静默无反应。
@@ -110,11 +111,18 @@ class TypingMonitor extends EventEmitter {
     this.probeTrusted = null;  // 探针自检回来的 TCC 信任状态（null = 还没收到）
   }
 
+  /** 本平台为什么用不了打字监听（null = 能用）。菜单文案直接用它，别把两种原因混成一句。 */
+  unavailableReason() {
+    if (process.platform === 'win32') return findCsc() ? null : '缺 csc.exe';
+    // mac 上"用不了"几乎都是**包没打全**（探针是构建产物，不跟着 git 走），
+    // 说成"本平台不支持"会把人引去查平台，实际该重跑打包脚本 —— 实测这样误判过一次。
+    if (process.platform === 'darwin') return fs.existsSync(macHelperPath()) ? null : '探针文件缺失';
+    return '本平台不支持';
+  }
+
   /** 本平台能否监听打字（不代表已启动，也不代表已拿到权限）。 */
   available() {
-    if (process.platform === 'win32') return !!findCsc();
-    if (process.platform === 'darwin') return fs.existsSync(macHelperPath());
-    return false;
+    return this.unavailableReason() === null;
   }
 
   running() { return !!this.child; }

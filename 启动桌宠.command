@@ -11,5 +11,9 @@ if [ ! -x "$ELECTRON" ]; then
   exit 1
 fi
 
-nohup "$ELECTRON" "$DIR" >/dev/null 2>&1 &
+# 日志留在 ./data/launch.log：探针/语音这类"起不来但不弹错"的问题只有 stdout 留痕。
+# 实测踩过：这里重定向到 /dev/null，用户跑的是缺打字探针的旧包，界面上只有一个灰色菜单项，
+# 查因只能靠翻进程树 —— 一行日志就能定位。日志随 data 一起被打包脚本排除，不会外泄。
+mkdir -p "$DIR/data"
+nohup "$ELECTRON" "$DIR" >> "$DIR/data/launch.log" 2>&1 &
 exit 0

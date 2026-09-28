@@ -1726,10 +1726,11 @@ class PetApp {
     // 形态三能不能用，分两层判：**探针在不在**（win 看 csc、mac 看预编译 helper）
     // 和**权限有没有**（macOS 未授予「辅助功能」时事件不来且不报错）。
     // 只判第一层就会出现"选了却没反应"的死局 —— 那是本项目明令禁止的表现。
-    const typingProbe = self.typing.available();
+    const typingWhy = self.typing.unavailableReason();      // null = 探针可用
+    const typingProbe = !typingWhy;
     const ax = accessibilityTrusted(systemPreferences, false);
     const typingOn = typingProbe && ax.trusted;
-    const typingNote = !typingProbe ? '（本平台不支持）' : (ax.trusted ? '' : '（需授权辅助功能）');
+    const typingNote = typingWhy ? `（${typingWhy}）` : (ax.trusted ? '' : '（需授权辅助功能）');
     const stateSub = [
       // 三个单选项直达目标形态（勾选态 = 渲染层回传的当前形态）
       self.menuItem('stateMain', { type: 'radio', checked: self.visualMode === 'main', click: () => self.send('state:visual', { mode: 'main' }) }),
