@@ -363,7 +363,7 @@ arm64 helper（Swift + `NSEvent`/`CGEventTap`）+ ad-hoc 签名 + `isTrustedAcce
 | L1 | **会不会冻结其它 Chromium 窗口** | VM 无 Metal，合成路径与真机不同；这是全项目唯一未消的高风险项 | 真机上开播放 GIF 的浏览器标签，反复点击/拖动桌宠，看 GIF 是否停 |
 | L2 | **语音进入对话后采集不起帧** | VM 虚拟声卡 `peak=0`（静音），分不清是 mac 采集管线问题还是无声源 | 真机上跑 `voice:e2e`，看 🎤 之后 `state` 是否变 `decoding`；不变则查 `asr.js` 的 `ensureCapture/beginUtt` |
 | L3 | **arm64 强制签名** | x86_64 不校验签名，VM 上漏签名不报错 | arm64 产物必须 `codesign -s -`（ad-hoc 即可，不需开发者账号）；否则 M2 上"已损坏，无法打开" |
-| L4 | **辅助功能权限与打字探针（形态三）** | 一期按 D5 置灰，未写 mac 实现 | 二期：构建期预编译 Swift helper + `isTrustedAccessibilityClient` 引导 |
+| L4 | ~~辅助功能权限与打字探针（形态三）~~ **已完成 2026-09-28** | VM 里就能真验（辅助功能弹窗正常），已验通 | 见 §13 |
 | L5 | **真机 macOS 小版本** | VM 是 15.3，目标机大概率 26.x | 能碰到那台 M2 Pro 时先跑 `sw_vers` 回填，按该版本重点复验 L1/L2 |
 
 ---
@@ -419,3 +419,54 @@ VM 里出 x86_64 包，并**对分发包本身**（不是开发树）跑完整�
 - 用微信 / QQ 传这个文件夹通常不加隔离属性，用户完全无感；浏览器下载才需要走上一条。
 - ⚠ 若启用语音：**ad-hoc 的 Designated Requirement 绑在具体那份代码哈希上**（Apple TN3127 原文），
   所以每次更新后麦克风授权会重新询问一次。**不用语音就没有这个代价。**
+
+---
+
+## 13. 形态三（打字状态）macOS 探针 —— 已完成
+
+### 13.1 关键发现：`addGlobalMonitorForEvents` 在无 nib 的命令行工具里收不到事件
+
+第一版探针用 `NSEvent addGlobalMonitorForEventsMatchingMask:`。**实测：注册成功、返回非 nil、
+进程活着、`AXIsProcessTrusted()` 返回 true，但一个事件都收不到**（真人敲 15+ 下，输出 0 字节）。
+中途还试过补 `NSApplicationLoad()`（`NSApp` 在 `sharedApplication` 之前是 nil，那句激活策略
+其实是对 nil 发消息）——仍然 0 节拍。
+
+改用 **`CGEventTapCreate(kCGHIDEventTap, ..., kCGEventTapOptionListenOnly, ...)` + 把
+MachPort 显式挂进当前 runloop**，不经 AppKit 事件派发，**立刻通了：真人敲一轮，捕获 152 个节拍**。
+
+红线反而更硬：`kCGEventTapOptionListenOnly` **按定义只能旁听、不能拦截或改写**，
+所以"绝不错过、绝不吞键"是结构保证，比 Windows 靠写对 `CallNextHookEx` 更可靠。
+
+### 13.2 隐私协议
+
+探针 stdout 只允许三个单字符协议位：`k`（有一个文本键被按下）、`t`/`n`（自检的 TCC 信任状态）。
+`test/unit/typing.test.js` 里有一条穷举式不变式守着：**每条写语句的字符字面量必须全在
+{k,t,n,'\n'} 内且至少有一个** —— 任何把键码/字符内容往 stdout 发的写法（包括发变量）都会立刻红。
+
+白名单仍由 `src/shared/typing.js` 生成、经 argv 注入，**唯一事实来源没有分裂**。
+mac 侧改判"字符"而非"VK 码"（macOS 键码随布局变），用 `CGEventKeyboardGetUnicodeString`
+取当前修饰状态下的字符并转小写，语义与 Windows 的 VK 表对齐（Shift+A→a、Shift+/→/）。
+
+### 13.3 权限与置灰（三态，不静默）
+
+`available()` 只看"helper 在不在"是**不够的**——未授权时事件不来且系统不报错。
+所以菜单标签三态：`（本平台不支持）` / `（需授权辅助功能）` / 正常。
+探针在但缺权限时**保持可点**，点它是去弹系统授权框引导，而不是静默切过去。
+
+### 13.4 复验方式
+
+`sh tools/typing-live-test.sh`（默认 15 秒窗口）——**必须真人按键**：
+VM 里 `osascript ... keystroke` 在 SSH 会话下会整段挂死（System Events 起不来、
+自动化授权框弹不出来），那是驱动方式的限制，不是探针问题；真机上探针由 GUI 会话里的
+主进程拉起，不存在这个限制。所以 `verify-vm.sh` 第 8 段默认只做静态检查 + 信任状态如实回报，
+真人节拍验证要显式 `LIVE_TYPING=1`。
+
+### 13.5 一个待你拍板的既有不一致
+
+`shared/typing.js` 注释写着"Ctrl/Alt/Shift/Win 单按**与组合**一律不算打字"，但 Windows 探针
+只拿得到 `vkCode`、看不到修饰键状态 → **按 Ctrl+C 在 Windows 上会被算成打了一字**（只有单按
+Ctrl 被排除）。注释与实现本来就不一致，不是移植引入的。
+
+新写的 mac 探针按注释的**意图**做了（Ctrl/Alt/Cmd 组合不算），所以两平台现在行为有差异。
+三个选项：① 改 Windows 探针加 `GetKeyState` 查修饰键（最干净，需 Windows 侧真机验证）；
+② 改 mac 探针跟 Windows 一致（两边一致但都违背注释）；③ 保持现状并把这个差异写进注释。

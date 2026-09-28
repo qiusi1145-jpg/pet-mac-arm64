@@ -60,4 +60,23 @@ function guardPetWindow(win, winEnum, log) {
   }
 }
 
-module.exports = { IS_WIN, IS_MAC, applyStartupSwitches, hideFromDock, guardPetWindow };
+/**
+ * macOS「辅助功能」权限查询 —— 形态三（打字状态）的前置条件。
+ *
+ * 为什么不能只判断"探针在不在"：未授权时 `addGlobalMonitorForEvents` **照样注册成功**，
+ * 但事件永远不来，而且系统不报错。所以必须显式查信任状态，否则就是"选了没反应"的死局。
+ *
+ * @param {object} systemPreferences Electron 的 systemPreferences（由调用方注入，便于单测）
+ * @param {boolean} prompt 是否顺带弹系统授权框 —— 只在用户**主动**选形态三时传 true，
+ *   启动/刷新菜单时传 false（不要没事就弹框骚扰用户）。
+ * @returns {{known:boolean, trusted:boolean}} known=false 表示本平台/本版本无此概念，不拦。
+ */
+function accessibilityTrusted(systemPreferences, prompt = false) {
+  if (!IS_MAC || !systemPreferences
+    || typeof systemPreferences.isTrustedAccessibilityClient !== 'function') {
+    return { known: false, trusted: true };
+  }
+  return { known: true, trusted: !!systemPreferences.isTrustedAccessibilityClient(prompt) };
+}
+
+module.exports = { IS_WIN, IS_MAC, applyStartupSwitches, hideFromDock, guardPetWindow, accessibilityTrusted };

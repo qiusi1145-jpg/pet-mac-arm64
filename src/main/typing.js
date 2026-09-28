@@ -6,9 +6,13 @@
  *  - win32：用 .NET Framework 自带的 csc.exe 把下面一小段 C#（WH_KEYBOARD_LL 低级键盘钩子）
  *    编译成探针 exe 常驻 spawn，钩子里每命中一个文本键就往 stdout 写一行 `k`。
  *    与 winenum.js 同一条"零原生依赖"路子（不引入任何 npm 原生模块）。
- *  - 其它平台（含 macOS）：available() 返回 false —— 菜单项直接置灰，不做静默无反应。
- *    macOS 落地时要单独准备预编译探针（stock macOS 没有系统自带编译器，"运行期现场编译"
- *    这招在那边不成立），且未授予「辅助功能」权限时事件不会到达，需要引导用户授权。
+ *  - darwin：跑**构建期预编译**的 ObjC 探针 src/main/mac/keybeat（macOS 没有系统自带编译器，
+ *    "运行期现编"这招不成立，所以 helper 必须随包分发并纳入 ad-hoc 签名）。
+ *    它用 `addGlobalMonitorForEvents` —— 全局监控器按定义只能观察、不能拦截，
+ *    所以"绝不吞键"这条在 mac 上是**结构上成立**的，比 Windows 靠写对 CallNextHookEx 更稳。
+ *    ⚠ 未授予「辅助功能」时事件不会到达**且不报错**，所以可用性判定必须查权限，
+ *      不能等用户选了形态三才发现没反应（主进程负责引导授权，见 main.js 的菜单标签）。
+ *  - 其它平台：available() 返回 false —— 菜单项直接置灰，不做静默无反应。
  *
  * 三条硬约束（改这里前先读懂）：
  *  1. 隐私：探针只输出 `k`，**键值不跨进程**（判定用的白名单在生成源码时嵌进探针里，
@@ -26,10 +30,15 @@ const { spawn, spawnSync } = require('child_process');
 const { EventEmitter } = require('events');
 
 const { findCsc } = require('./winenum');
-const { textKeyVkList } = require('../shared/typing');
+const { textKeyVkList, macProbeArgs } = require('../shared/typing');
 
 const WM_KEYDOWN = 0x0100;
 const WH_KEYBOARD_LL = 13;
+
+/** macOS 预编译探针的位置（由 tools/build-mac-helper.sh 产出，随包分发）。 */
+function macHelperPath() {
+  return path.join(__dirname, 'mac', 'keybeat');
+}
 
 /** 文本键白名单在生成期嵌进探针：Node 侧 shared/typing.js 是唯一事实来源（可单测）。 */
 function probeSource() {
@@ -43,6 +52,7 @@ class KeyBeat {
   [DllImport("user32.dll")] static extern IntPtr SetWindowsHookEx(int idHook, HookProc lpfn, IntPtr hMod, uint dwThreadId);
   [DllImport("user32.dll")] static extern bool UnhookWindowsHookEx(IntPtr hhk);
   [DllImport("user32.dll")] static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
+  [DllImport("user32.dll")] static extern short GetAsyncKeyState(int v);
   [DllImport("kernel32.dll", CharSet=CharSet.Unicode)] static extern IntPtr GetModuleHandle(string name);
   [DllImport("user32.dll")] static extern int GetMessage(out MSG m, IntPtr hWnd, int f1, int f2);
   [DllImport("user32.dll")] static extern bool TranslateMessage(ref MSG m);
@@ -52,10 +62,21 @@ class KeyBeat {
   // 委托必须由静态字段持有：只交给 SetWindowsHookEx 的局部变量会被 GC 回收，
   // 之后系统回调进来时委托已死 → 探针进程直接崩（.NET 封送的经典坑）。
   static HookProc Proc;
+  // Ctrl/Alt/Cmd(Win) 任一按下就不算"在打字"（Shift 算，Shift+A 就是在打 A）。
+  // 用 GetAsyncKeyState 而不是 GetKeyState：本线程的按键状态在低级钩子里**尚未更新**，
+  // 只有异步状态才是真的。取最高位（0x8000）判"当前是否按下"。
+  static bool ModHeld() {
+    return (GetAsyncKeyState(0x11) & 0x8000) != 0   // VK_CONTROL
+        || (GetAsyncKeyState(0x12) & 0x8000) != 0   // VK_MENU (Alt)
+        || (GetAsyncKeyState(0x5B) & 0x8000) != 0   // VK_LWIN
+        || (GetAsyncKeyState(0x5C) & 0x8000) != 0;  // VK_RWIN
+  }
   static IntPtr Callback(int nCode, IntPtr wParam, IntPtr lParam) {
     if (nCode >= 0 && (int)wParam == ${WM_KEYDOWN}) {
       var k = (KBDLLHOOKSTRUCT)Marshal.PtrToStructure(lParam, typeof(KBDLLHOOKSTRUCT));
-      if (Text.Contains(k.vkCode)) Console.Out.WriteLine("k"); // 只报"有一个文本键被按下"
+      // 先查白名单再查修饰键：绝大多数按键不在白名单，零额外开销（回调必须极快，
+      // 超过系统 LowLevelHooksTimeout 会被静默摘钩）。
+      if (Text.Contains(k.vkCode) && !ModHeld()) Console.Out.WriteLine("k"); // 只报"有一个文本键被按下"
     }
     return CallNextHookEx(IntPtr.Zero, nCode, wParam, lParam);  // 绝不错过、绝不吞键
   }
@@ -86,11 +107,14 @@ class TypingMonitor extends EventEmitter {
     this.lines = null;
     this.error = null;      // 最近一次失败原因（null = 没失败过）
     this.compileMs = 0;     // 首次编译耗时（诊断用）
+    this.probeTrusted = null;  // 探针自检回来的 TCC 信任状态（null = 还没收到）
   }
 
-  /** 本平台能否监听打字（不代表已启动）。 */
+  /** 本平台能否监听打字（不代表已启动，也不代表已拿到权限）。 */
   available() {
-    return process.platform === 'win32' && !!findCsc();
+    if (process.platform === 'win32') return !!findCsc();
+    if (process.platform === 'darwin') return fs.existsSync(macHelperPath());
+    return false;
   }
 
   running() { return !!this.child; }
@@ -102,6 +126,8 @@ class TypingMonitor extends EventEmitter {
       running: this.running(),
       error: this.error,
       compileMs: this.compileMs,
+      // 探针自检回来的信任状态（mac 才有意义；没收到自检行则为 null）
+      probeTrusted: this.probeTrusted,
     };
   }
 
@@ -127,16 +153,27 @@ class TypingMonitor extends EventEmitter {
   /** 启动监听（幂等）。@returns {boolean} 是否已在监听 */
   start() {
     if (this.child) return true;
-    if (process.platform !== 'win32') {
+    let cmd, args, extra = {};
+    if (process.platform === 'win32') {
+      cmd = this.ensureExe();
+      args = [];
+      extra = { windowsHide: true };
+    } else if (process.platform === 'darwin') {
+      cmd = macHelperPath();
+      if (!fs.existsSync(cmd)) {
+        this.error = 'helper-missing（先跑 sh tools/build-mac-helper.sh）';
+        return false;
+      }
+      args = macProbeArgs();   // 白名单注入，键值仍不出探针进程
+    } else {
       this.error = `unsupported-platform(${process.platform})`;
       return false;
     }
     try {
-      const exe = this.ensureExe();
-      const child = spawn(exe, [], {
-        windowsHide: true,
+      const child = spawn(cmd, args, {
         detached: false,
         stdio: ['ignore', 'pipe', 'ignore'],
+        ...extra,
       });
       child.on('error', (e) => {
         this.error = `spawn:${e.message}`;
@@ -152,9 +189,14 @@ class TypingMonitor extends EventEmitter {
           console.error('[typing] 打字探针意外退出，形态三停在"不打字"素材：', this.error);
         }
       });
-      // 探针每命中一个文本键写一行 k；其它行一律忽略（不认识的当噪声，协议要扩再往上加）
+      // 协议：探针首行报自检的 TCC 信任状态（t/n），之后每命中一个文本键写一行 k；
+      // 其它行一律忽略（不认识的当噪声，协议要扩再往上加）。
       const lines = readline.createInterface({ input: child.stdout });
-      lines.on('line', (l) => { if (l.trim() === 'k') this.emit('beat'); });
+      lines.on('line', (l) => {
+        const s = l.trim();
+        if (s === 'k') { this.emit('beat'); return; }
+        if (s === 't' || s === 'n') this.probeTrusted = (s === 't');
+      });
       this.child = child;
       this.lines = lines;
       this.error = null;
@@ -180,4 +222,4 @@ class TypingMonitor extends EventEmitter {
   }
 }
 
-module.exports = { TypingMonitor, probeSource, probeExeName };
+module.exports = { TypingMonitor, probeSource, probeExeName, macHelperPath };

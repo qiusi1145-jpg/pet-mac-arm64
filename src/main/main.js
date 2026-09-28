@@ -9,7 +9,7 @@
  *  - 锁定态 = 永远整窗点击穿透（动画照常），唯一解锁途径：托盘菜单。
  *  - 宠物/背景图片复制到 userData/assets 后持久化**相对路径**（随 data/ 文件夹便携）。
  */
-const { app, BrowserWindow, ipcMain, screen, Tray, Menu, nativeImage, shell, globalShortcut } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, Tray, Menu, nativeImage, shell, globalShortcut, systemPreferences } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -32,7 +32,7 @@ const { ACCENTS, normalizeAccentPref } = require('../shared/uiTheme');
 const PS = require('../shared/pomodoroStats');          // 番茄钟学习记录/成就（纯函数）
 const pomoStatsStore = require('./pomodoroStatsStore'); // 同上，持久化（data/pomodoro-stats.json）
 const { WinEnum } = require('./winenum');
-const { IS_MAC, applyStartupSwitches, hideFromDock, guardPetWindow } = require('./platform');
+const { IS_MAC, applyStartupSwitches, hideFromDock, guardPetWindow, accessibilityTrusted } = require('./platform');
 const { TypingMonitor } = require('./typing');
 const { normalizeVisualMode } = require('../shared/status'); // 视觉形态枚举（与渲染层同一份定义）
 
@@ -1723,19 +1723,35 @@ class PetApp {
       self.menuItem('bgOp75', { type: 'radio', checked: bgOpacityPct === 75, click: () => self.send('bg:opacity', { opacity: 0.75 }) }),
       self.menuItem('bgOp100', { type: 'radio', checked: bgOpacityPct === 100, click: () => self.send('bg:opacity', { opacity: 1 }) }),
     ].filter(Boolean);
-    const typingOn = self.typing.available();
+    // 形态三能不能用，分两层判：**探针在不在**（win 看 csc、mac 看预编译 helper）
+    // 和**权限有没有**（macOS 未授予「辅助功能」时事件不来且不报错）。
+    // 只判第一层就会出现"选了却没反应"的死局 —— 那是本项目明令禁止的表现。
+    const typingProbe = self.typing.available();
+    const ax = accessibilityTrusted(systemPreferences, false);
+    const typingOn = typingProbe && ax.trusted;
+    const typingNote = !typingProbe ? '（本平台不支持）' : (ax.trusted ? '' : '（需授权辅助功能）');
     const stateSub = [
       // 三个单选项直达目标形态（勾选态 = 渲染层回传的当前形态）
       self.menuItem('stateMain', { type: 'radio', checked: self.visualMode === 'main', click: () => self.send('state:visual', { mode: 'main' }) }),
       self.menuItem('stateAlt', { type: 'radio', checked: self.visualMode === 'state', click: () => self.send('state:visual', { mode: 'state' }) }),
       // 「打字状态」需要全局按键探针：本平台用不了就置灰（不能让用户"选了却没反应"），
       // 文案直接说明原因 —— 与语音全局键注册失败时"如实回报"是同一条红线。
+      // 探针在但缺权限时**保持可点**：点它是去弹系统授权框引导，而不是静默切形态。
       self.menuItem('stateType', {
         type: 'radio',
         checked: self.visualMode === 'type',
-        enabled: typingOn,
-        label: `${self.menuLabel('stateType')}${typingOn ? '' : '（本平台不支持）'}`,
-        click: () => self.send('state:visual', { mode: 'type' }),
+        enabled: typingProbe,
+        label: `${self.menuLabel('stateType')}${typingNote}`,
+        click: () => {
+          if (!typingProbe) return;
+          if (!ax.trusted) {
+            accessibilityTrusted(systemPreferences, true);   // 用户主动点，才弹系统授权框
+            self.showIfHidden();
+            self.send('bubble:chat', { text: '请在「系统设置 → 隐私与安全性 → 辅助功能」里勾选桌宠，然后重新选择本项。', ms: 6000 });
+            return;
+          }
+          self.send('state:visual', { mode: 'type' });
+        },
       }),
     ].filter(Boolean);
 

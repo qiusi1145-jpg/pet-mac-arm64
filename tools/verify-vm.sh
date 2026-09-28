@@ -119,7 +119,39 @@ if [ -f "$MP" ]; then
   say "签名: $(codesign -dv node_modules/electron/dist/Electron.app 2>&1 | head -1)"
 fi
 
-# ---------- 8. 汇总 ----------
+# ---------- 8. 打字探针（形态三）----------
+say ""; say "===== [8] 打字探针 keybeat ====="
+HB=src/main/mac/keybeat
+if [ ! -f "$HB" ]; then
+  say "⚠ 没有 $HB —— 形态三在 mac 上会置灰。构建：sh tools/build-mac-helper.sh"
+  FAILS="$FAILS 打字探针未构建"
+else
+  file -b "$HB" | grep -q Mach-O && say "✓ 探针是 Mach-O：$(file -b "$HB" | cut -c1-46)" || say "❌ $HB 不是可执行 Mach-O"
+  codesign --verify "$HB" >/dev/null 2>&1 && say "✓ 探针已签名（arm64 上无签名会被内核杀）" \
+    || say "⚠ 探针未签名 —— 分发包里必须由 mac-package.sh 补签"
+  # 信任状态如实打印：未授权是环境状态，不是代码 bug，所以不判失败，但必须看得见
+  cat > /tmp/axcheck.js <<'JSEOF'
+const { app, systemPreferences } = require('electron');
+app.whenReady().then(() => {
+  console.log(systemPreferences.isTrustedAccessibilityClient(false) ? 'trusted' : 'untrusted');
+  app.exit(0);
+});
+JSEOF
+  TRUST=$(./node_modules/.bin/electron /tmp/axcheck.js 2>/dev/null | grep -aoE 'trusted|untrusted' | tail -1)
+  say "辅助功能信任：${TRUST:-查询失败}（untrusted 时事件不会到达且不报错，菜单会显示「需授权辅助功能」）"
+  # ⚠ 这里**不**用 osascript 合成按键：SSH 会话下 System Events 起不来、会整段挂死
+  #   （实测踩过）。真人按键验证走 tools/typing-live-test.sh，需要人配合，所以不并进自动流程。
+  if [ "${LIVE_TYPING:-0}" = "1" ]; then
+    say "-- LIVE_TYPING=1：跑真人按键验证（接下来 15 秒请在虚拟机里连续敲 10 下以上键）--"
+    sh tools/typing-live-test.sh 18 >> "$OUT/raw.log" 2>&1 \
+      && say "✓ 探针端到端捕获到节拍（形态三在 macOS 上可用）" \
+      || { say "❌ 探针收不到节拍，见 $OUT/raw.log"; FAILS="$FAILS 打字探针"; }
+  else
+    say "— 节拍实测需真人按键，默认跳过；要跑：LIVE_TYPING=1 sh tools/verify-vm.sh"
+  fi
+fi
+
+# ---------- 汇总 ----------
 say ""
 say "########## 汇总 ##########"
 if [ -n "$FAILS" ]; then say "❌ 失败段:$FAILS"; else say "✅ 全部通过"; fi

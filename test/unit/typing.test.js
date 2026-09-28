@@ -11,6 +11,7 @@ const assert = require('node:assert/strict');
 const {
   TEXT_KEY_VK_RANGES, textKeyVkList, isTextKeyVk, TYPING_IDLE,
   typingCfg, createTypingMachine, onTypingBeat, onTypingIdleCheck,
+  TEXT_CHARS_MAC, TEXT_KEYCODES_MAC, isTextKeyMac, macProbeArgs,
 } = require('../../src/shared/typing');
 
 const CFG = { idleMs: 1000, minFlipMs: 50 };
@@ -164,11 +165,13 @@ test('白名单一改，探针 exe 文件名就变（否则旧 exe 缓存会让�
   assert.notEqual(a, probeExeName(probeSource() + '// 改一个字符'), '源码变化必须换名');
 });
 
-test('非 Windows 平台：available() false 且 start() 失败但不抛（菜单据此置灰，不做静默无反应）', () => {
+// 原本这条拿 darwin 当"不支持的平台"举例；macOS 探针落地后 darwin 已是受支持平台，
+// 所以改用真正没有实现的 freebsd，另起一条锁 darwin 的行为。
+test('无实现的平台：available() false 且 start() 失败但不抛（菜单据此置灰，不做静默无反应）', () => {
   const desc = Object.getOwnPropertyDescriptor(process, 'platform');
   const m = new TypingMonitor(require('os').tmpdir());
   try {
-    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+    Object.defineProperty(process, 'platform', { value: 'freebsd', configurable: true });
     assert.equal(m.available(), false);
     assert.equal(m.start(), false);
     assert.equal(m.running(), false);
@@ -178,4 +181,115 @@ test('非 Windows 平台：available() false 且 start() 失败但不抛（菜�
     Object.defineProperty(process, 'platform', desc);
   }
   assert.equal(m.status().platform, desc.value, '测试必须把 process.platform 还原');
+});
+
+// darwin 的可用性 = 预编译 helper 在不在。构建期没编出来时必须置灰并给出可执行的提示，
+// 而不是静默失败，也不是去弹一个"能选但没反应"的形态三。
+test('darwin：helper 缺席 → available() false，start() 报 helper-missing 且指明怎么修', () => {
+  const desc = Object.getOwnPropertyDescriptor(process, 'platform');
+  const realExists = require('fs').existsSync;
+  const m = new TypingMonitor(require('os').tmpdir());
+  try {
+    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+    require('fs').existsSync = () => false;
+    assert.equal(m.available(), false);
+    assert.equal(m.start(), false);
+    assert.match(m.status().error, /helper-missing/, '错误里必须给出补救路径（build-mac-helper.sh）');
+  } finally {
+    require('fs').existsSync = realExists;
+    Object.defineProperty(process, 'platform', desc);
+  }
+});
+
+/* ================= macOS 探针（keybeat.m）的语义与隐私守卫 ================= */
+
+const fs = require('node:fs');
+const path = require('node:path');
+const { macHelperPath } = require('../../src/main/typing');
+
+test('mac 与 win 白名单语义一致（同一批键两边判定必须相同）', () => {
+  // 不测 Ctrl+C 这类组合：见下一条 —— 两平台在组合键上**有意不同**
+  const cases = [
+    ['a', 0x41, { characters: 'a' }],
+    ['Z', 0x5A, { characters: 'Z' }],
+    ['5', 0x35, { characters: '5' }],
+    [';', 0xBA, { characters: ';' }],
+    ['空格', 0x20, { characters: ' ' }],
+    ['Return', 0x0D, { characters: '\r', keyCode: 36 }],
+    ['退格', 0x08, { characters: '\x7f', keyCode: 51 }],
+    ['Tab', 0x09, { characters: '\t', keyCode: 48 }],
+    ['方向键', 0x28, { characters: '', keyCode: 125 }],
+  ];
+  for (const [name, vk, mac] of cases) {
+    assert.equal(isTextKeyMac(mac), isTextKeyVk(vk), `${name}：两平台判定不一致`);
+  }
+});
+
+test('mac 探针：Ctrl/Alt/Cmd 组合一律不算打字（Shift 算，因为 Shift+A 就是在打字）', () => {
+  assert.equal(isTextKeyMac({ characters: 'c', controlHeld: true }), false);
+  assert.equal(isTextKeyMac({ characters: 'c', commandHeld: true }), false);
+  assert.equal(isTextKeyMac({ characters: 'c', optionHeld: true }), false);
+  assert.equal(isTextKeyMac({ characters: 'C' }), true);   // Shift+A 给出 'A'
+});
+
+test('mac 白名单是唯一事实来源：探针源码里不硬编码键码/字符', () => {
+  const src = fs.readFileSync(path.join(__dirname, '../../src/main/mac/keybeat.m'), 'utf8');
+  assert.match(src, /argc > 1 \? argv\[1\]/, '字符白名单必须来自 argv[1]');
+  assert.match(src, /argc > 2/, '特殊键码必须来自 argv[2]');
+  for (const c of TEXT_KEYCODES_MAC) {
+    assert.ok(!new RegExp(`=\s*${c}\b`).test(src), `探针把键码 ${c} 写死了，改配置不会生效`);
+  }
+});
+
+test('隐私红线：探针只允许写协议位 k/t/n，任何输出键值的语句都是事故', () => {
+  const src = fs.readFileSync(path.join(__dirname, '../../src/main/mac/keybeat.m'), 'utf8');
+  const writes = src.match(/\b(fputc|fwrite|fputs|printf|puts|fprintf|fflush)\s*\([^;]*\)/g) || [];
+  assert.ok(writes.length >= 1, '一条输出都没有 = 探针根本不上报');
+  // 协议只有三个单字符位：k = 有一个文本键被按下；t/n = 探针自检的 TCC 信任状态。
+  // 不变式取"每条写语句的字符字面量都必须属于协议集合、且至少有一个"：
+  // 既放过 `fputc(AXIsProcessTrusted() ? 't' : 'n', stdout)` 这类合法写法，
+  // 又会抓住任何把变量/键码/字符内容往 stdout 发的语句（没有合法字面量 → 红）。
+  const ALLOWED = new Set(["'k'", "'t'", "'n'", String.raw`'\n'`]);
+  for (const raw of writes) {
+    const w = raw.trim();
+    if (/^fflush\(stdout\)$/.test(w)) continue;
+    const lits = w.match(/'(?:\\.|[^'\\])'/g) || [];
+    assert.ok(lits.length > 0, `写语句里没有协议字符字面量，来源可疑：${w}`);
+    for (const L of lits) {
+      assert.ok(ALLOWED.has(L), `探针试图输出 ${L}（可能泄露键值）：${w}`);
+    }
+  }
+  assert.ok(writes.some((w) => w.includes("'k'")), '必须有上报 k 的语句');
+});
+
+test('macProbeArgs：给出 [字符表, 键码CSV]，且字符表覆盖字母数字标点', () => {
+  const [chars, codes] = macProbeArgs();
+  assert.equal(typeof chars, 'string');
+  assert.ok(chars.includes('a') && chars.includes('z') && chars.includes('0') && chars.includes('9'));
+  for (const p of [';', '=', ',', '-', '.', '/', '`', '[', ']', '\x5c', "'"]) {
+    assert.ok(chars.includes(p), `标点 ${p} 应算打字`);
+  }
+  assert.ok(!chars.includes('\t'), 'Tab 不算打字');
+  assert.deepEqual(codes.split(',').map(Number), TEXT_KEYCODES_MAC);
+  // 与 Windows 侧同源不同形：VK 表展开后不含修饰键码
+  for (const mod of [0x10, 0x11, 0x12, 0x5B]) {
+    assert.equal(isTextKeyVk(mod), false, `VK ${mod} 是修饰键，不该算打字`);
+  }
+});
+test('mac helper 路径约定', () => {
+  assert.ok(macHelperPath().endsWith('mac'.concat(require('path').sep, 'keybeat')));
+});
+
+// 注释口径是"Ctrl/Alt/Shift/Win 单按与组合一律不算打字"，但探针只拿得到 vkCode，
+// 看不到修饰键状态 —— 曾经真的把 Ctrl+C 算成打了一字。这条锁住修复不回退。
+test('win 探针必须真的查修饰键（否则 Ctrl+C 被算成打字，与注释口径不符）', () => {
+  const src = probeSource();
+  assert.match(src, /GetAsyncKeyState/, '要用 GetAsyncKeyState：低级钩子里本线程按键状态尚未更新');
+  assert.ok(!/[^c]GetKeyState\(/.test(src), '不许退回 GetKeyState（读到的是过期状态）');
+  for (const vk of ['0x11', '0x12', '0x5B', '0x5C']) {
+    assert.ok(src.includes(vk), `漏查修饰键 ${vk}`);
+  }
+  assert.ok(!src.includes('0x10'), 'Shift(0x10) 不该被排除 —— Shift+A 就是在打 A');
+  assert.match(src, /Text\.Contains\(k\.vkCode\)\s*&&\s*!ModHeld\(\)/,
+    '必须先查白名单再查修饰键：回调超过 LowLevelHooksTimeout 会被系统静默摘钩');
 });
