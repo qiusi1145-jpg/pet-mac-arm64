@@ -34,17 +34,18 @@ jobs:
           node-version: 22
 
       # 原生出包：编译打字探针 → 装依赖 → ad-hoc 签名（由内向外）→ 清隔离 → 逐个 Mach-O 校验
+      # tee 到 $RUNNER_TEMP 是为了让最后那步能把日志贴成 commit 评论（见文件末尾的说明）。
       - name: 出包（本机架构 = arm64，不交叉）
-        run: sh tools/mac-package.sh
+        run: sh tools/mac-package.sh 2>&1 | tee "$RUNNER_TEMP/package.log"
 
       # ⚠ 验证跑在**分发包本身**上，不是开发树：装配漏文件、签名顺序错、
       #   探针没随包走，这类问题只有在产物上跑才暴露得出来。
       #   verify-vm.sh 含：L1 单测 / L2 冒烟 / L3 UI ×2（默认缩放 + devicePixelRatio=2）/
-      #   签名清点 / 探针静态检查。语音段因包里刻意不含模型而自动降级跳过。
+      #   签名清点 / 探针静态检查。语音段因包里不含模型而自动降级跳过。
       - name: 对分发包跑全量验证
         run: |
           cd dist/桌宠-mac-arm64
-          sh tools/verify-vm.sh
+          sh tools/verify-vm.sh 2>&1 | tee "$RUNNER_TEMP/verify.log"
 
       # 只有 ditto 会保留 .command / keybeat 的可执行位与签名（Windows 压缩软件会把执行位弄丢）
       - name: 打成 zip 并给出 sha256
@@ -64,3 +65,31 @@ jobs:
             dist/桌宠-mac-arm64.zip.sha256.txt
           if-no-files-found: error
           retention-days: 90
+
+      # 把打包/验证日志贴成 **commit 评论**。为什么用这个而不是 artifact：
+      # artifact 和 job 日志的 API 都要登录（实测 403 Must have admin rights），
+      # 而公共仓库的 commit 评论**不需要凭据就能读** —— 出包在真 arm64 上失败时，
+      # 不用麻烦别人手动贴日志，直接 GET 这条评论就能定位。
+      # 只在失败时也想看到内容，所以 if: always()；贴失败绝不把整个 job 带崩。
+      - name: 把日志贴成 commit 评论（公开可读）
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          {
+            echo "结论：${{ job.status }}"
+            echo "运行器：$(uname -m) / $(sw_vers -productVersion 2>/dev/null || echo '?')"
+            echo "运行：${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            echo '```'
+            tail -c 40000 "$RUNNER_TEMP/package.log" 2>/dev/null
+            echo "----- verify-vm.sh -----"
+            tail -c 20000 "$RUNNER_TEMP/verify.log" 2>/dev/null
+            echo '```'
+          } > "$RUNNER_TEMP/comment.md"
+          node -e '
+            const fs = require("fs");
+            process.stdout.write(JSON.stringify({ body: fs.readFileSync(process.env.RUNNER_TEMP + "/comment.md", "utf8") }));
+          ' > "$RUNNER_TEMP/payload.json"
+          gh api -X POST "repos/${{ github.repository }}/commits/${{ github.sha }}/comments" \
+            --input "$RUNNER_TEMP/payload.json"

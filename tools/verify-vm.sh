@@ -107,7 +107,7 @@ if [ -n "$G" ]; then say "✓ $G"; else say "❌ 没拿到 window guard 回报�
 say ""; say "===== [7] 启动器 / 权限声明 ====="
 for f in 启动桌宠.command 启动桌宠-调试.command; do
   if [ -f "$f" ]; then
-    [ -x "$f" ] && say "✓ $f 存在且可执行" || say "⚠ $f 缺可执行位 → chmod +x $f（并 git update-index --chmod=+x）"
+    [ -x "$f" ] && say "✓ $f 存在且可执行" || say "⚠ $f 缺可执行位 → chmod +x ${f}（并 git update-index --chmod=+x）"
     head -1 "$f" | grep -q '^#!/bin/sh' && say "✓ $f shebang 正常" || say "⚠ $f shebang 缺失/异常"
     case $(head -2 "$f" | tail -1) in *$'\r'*) say "⚠ $f 是 CRLF 行尾，macOS 会拒绝执行" ;; *) say "✓ $f 行尾 LF" ;; esac
   else say "⚠ $f 不存在"; fi

@@ -29,7 +29,7 @@ case "$(uname -s)" in
 esac
 if [ -z "$FORCE" ] && [ -f "$OUT" ] && [ "$OUT" -nt "$SRC" ] \
    && file -b "$OUT" | grep -q "$ARCH"; then
-  echo "✓ helper 已是最新且是 $ARCH：$OUT"; exit 0
+  echo "✓ helper 已是最新且是 ${ARCH}：$OUT"; exit 0
 fi
 
 if ! command -v xcrun >/dev/null 2>&1 || ! xcrun --find clang >/dev/null 2>&1; then
@@ -40,9 +40,9 @@ fi
 # 只用 CoreGraphics/ApplicationServices 的 CGEventTap，不链 Cocoa —— 探针不经 AppKit
 # 事件派发（实测 addGlobalMonitorForEvents 对无 nib 命令行工具收不到事件）。
 xcrun clang -arch "$ARCH" -fobjc-arc -Os -Wall -framework ApplicationServices -o "$OUT" "$SRC" \
-  || { echo "❌ 编译失败（arch=$ARCH）"; exit 1; }
+  || { echo "❌ 编译失败（arch=${ARCH}）"; exit 1; }
 chmod +x "$OUT"
 # 产物架构必须真的对得上：交叉编译时"编成功了但架构错了"是最难查的那类问题
 file -b "$OUT" | grep -q "$ARCH" \
-  || { echo "❌ 产物架构不是 $ARCH：$(file -b "$OUT")"; exit 1; }
-echo "✓ 已编译 $OUT（$(file -b "$OUT" | cut -c1-46)）"
+  || { echo "❌ 产物架构不是 ${ARCH}：$(file -b "$OUT")"; exit 1; }
+echo "✓ 已编译 ${OUT}（$(file -b "$OUT" | cut -c1-46)）"
