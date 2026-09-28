@@ -39,10 +39,13 @@ echo "产出:   $OUT"
 # 必须在装配**之前**：build-mac-helper.sh 把产物放在源树的 src/main/mac/keybeat，
 # 装配靠整目录拷贝带上它 —— 先拷后编的话分发包里根本没有探针（实测踩过，
 # 用户机上形态三会静默置灰）。也必须在签名之前，否则签名扫不到它。
-echo ""; echo "===== [0] 构建打字探针 keybeat ====="
-sh tools/build-mac-helper.sh --force || die "打字探针编译失败（形态三在 mac 上会置灰）"
+echo ""; echo "===== [0] 构建打字探针 keybeat（目标架构 $ARCH）====="
+sh tools/build-mac-helper.sh --force "$ARCH" || die "打字探针编译失败（形态三在 mac 上会置灰）"
 [ -f src/main/mac/keybeat ] || die "编译后源树里仍没有 src/main/mac/keybeat"
-ok "探针已就位（源树）"
+# 交叉出包时最容易踩的坑：helper 悄悄按本机架构编了。产物架构必须显式核对。
+file -b src/main/mac/keybeat | grep -q "$ARCH" \
+  || die "helper 架构不是 $ARCH：$(file -b src/main/mac/keybeat)"
+ok "探针已就位（源树，$ARCH）"
 
 # ---------- 1. 装配 ----------
 # 只带运行需要的东西。刻意不带：node_modules（下面重装）、data（用户数据，首启自动建）、
@@ -60,12 +63,20 @@ ok "文件树就位"
 # ---------- 2. 装依赖（按目标架构）----------
 echo ""; echo "===== [2] npm install（--os=darwin --cpu=$NPM_CPU）====="
 # ⚠ 不能加 --omit=dev：Electron 本身就在 devDependencies 里，跳了就没有可执行文件
+# ⚠ 架构必须在 npm install **之前**就设好：electron 的 postinstall 按当时的配置下载二进制，
+#   装完再补一次 install.js 没用（它发现 dist 已存在就直接跳过）——
+#   实测这样会产出"arm64 包里塞 x86_64 Electron"的半成品，M2 用户只能靠 Rosetta 跑。
+export ELECTRON_ARCH="$EA" electron_config_arch="$EA" npm_config_arch="$EA"
+rm -rf "$OUT/node_modules"
 ( cd "$OUT" && npm install --no-audit --no-fund --os=darwin --cpu="$NPM_CPU" ) || die "npm install 失败"
-( cd "$OUT" && ELECTRON_SKIP_BINARY_DOWNLOAD=1 electron_config_arch="$EA" node node_modules/electron/install.js ) \
-  || warn "Electron 二进制已在上一步装好（跳过重复下载）"
 EB="$OUT/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron"
 [ -f "$EB" ] || die "找不到 Electron 主程序：$EB"
-ok "Electron 主程序就位：$(file "$EB" | sed 's/.*: //')"
+EB_ARCH=$(file -b "$EB" | grep -oE 'arm64|x86_64' | head -1)
+if [ "$EB_ARCH" = "$ARCH" ]; then
+  ok "Electron 主程序就位，架构与目标一致（$ARCH）"
+else
+  die "Electron 架构是 ${EB_ARCH:-未知}，目标是 $ARCH —— 发出去 M2 用户只能跑 Rosetta"
+fi
 
 # 便携包的启动器要能双击
 chmod +x "$OUT"/*.command 2>/dev/null
