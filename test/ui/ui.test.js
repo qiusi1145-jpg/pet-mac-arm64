@@ -79,6 +79,11 @@ async function main() {
     for (const l of keyLines) console.log('  ' + l);
     if (!pass) {
       console.log(`  FAIL code=${code}`);
+      // 失败时必须把子进程 stdout 的尾部也倒出来：场景里的"为什么不通过"是用 console.error
+      // 打的，而 Electron **主进程**的 console.error 落到子进程的 stdout（不是 stderr）；
+      // 上面回显的 keyLines 只挑 SCENARIO/[scenario] 行，于是失败原因被自己的过滤器吃掉
+      // —— 真机 CI 上 typing 偶发两次都查不到原因，就是这个。
+      if (out) console.log('  --- stdout 尾部（主进程 console.error 在这里）---\n' + out.slice(-2500));
       if (err) console.log('  --- stderr ---\n' + err.slice(0, 3000));
     }
   }

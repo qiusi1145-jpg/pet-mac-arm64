@@ -315,8 +315,17 @@ const scenarios = {
       console.error('[typing] 形态三素材未就位（frames/idle 缺失），场景无意义');
       return false;
     }
-    // 阈值调短到 300ms：场景不必死等 config 的 1s（1s 这条默认值由 typing.test.js 锁死）
-    await js('window.__petTest.setTypingIdleMs(300)');
+    // 阈值给到 1200ms：场景仍然验"停手越过阈值 → 第三张图"，但不再和 IPC 往返抢时间。
+    // （原来调成 300ms 是为了少等一会儿，结果在负载高的机器上，一次 executeJavaScript
+    //   往返就吃掉几百毫秒，读到的已经是停手后的 -1 —— 真机 CI 上就这样偶发过两次。
+    //   1s 这条默认值由 typing.test.js 锁死，不靠这个场景守。）
+    await js('window.__petTest.setTypingIdleMs(1200)');
+    // 主进程侧状态靠 IPC 回传，给它时间到位再断言（断言本身一个字不放松）
+    const until = async (pred, ms = 6000) => {
+      const t0 = Date.now();
+      while (Date.now() - t0 < ms) { if (pred()) return true; await sleep(50); }
+      return false;
+    };
     const r = await js(`(() => {
       const T = window.__petTest;
       const bc = () => { const p = T.state().pet; return { b: p.y + p.h, cx: p.x + p.w / 2 }; };
@@ -339,33 +348,39 @@ const scenarios = {
       frames.push(await js('window.__petTest.typingBeat()'));
       await sleep(70);
     }
-    await sleep(80);
     const mid = await js('window.__petState()');
-    await sleep(360); // 停手越过 300ms 阈值
+    // 停手 → 第三张图：**等它真的发生**，不再固定 sleep 猜延时
+    await waitFor(js, 'window.__petState().typingFrame === -1', 6000, '停手越过阈值回第三张图');
     const after = await js(`(() => { const s = window.__petState();
       return { frame: s.typingFrame, body: s.bodyKind, bc: { b: s.pet.y + s.pet.h, cx: s.pet.x + s.pet.w / 2 } }; })()`);
     const again = await js('window.__petTest.typingBeat()');   // 再起打 → 必须从图1（帧 0）
-    await sleep(120); // 等 visualSync 回到主进程
+    await until(() => mainState().visualMode === 'type');
     const msType = mainState();
     const back = await js(`(() => { const T = window.__petTest;
       const m = T.setVisualMode('main'); const s = T.state();
       return { m, body: s.bodyKind, frame: s.typingFrame, mode: s.visualMode }; })()`);
-    await sleep(120);
+    await until(() => mainState().visualMode === 'main');
     const msBack = mainState();
     const near = (a, b, eps = 1.5) => Math.abs(a - b) <= eps;
-    return r.mode0 === 'main' && r.got === 'type' && r.mode1 === 'type' &&
-      r.body1 === 'typeIdle' && r.frame1 === -1 &&                    // 进形态三先显示第三张图
-      near(r.bc1.b, r.bc0.b) && near(r.bc1.cx, r.bc0.cx) &&           // 换图原地不动
-      r.blinkSuppressed === true &&
-      frames.join(',') === '0,1,0' && mid.typingFrame === 0 &&        // 逐键交替（第三下回到图1）
-      near(mid.pet.y + mid.pet.h, r.bc0.b) &&
-      after.frame === -1 && after.body === 'typeIdle' &&              // 停手 → 第三张图
-      near(after.bc.b, r.bc0.b) && near(after.bc.cx, r.bc0.cx) &&
-      again === 0 &&                                                  // 再起打从图1 起
-      msType.visualMode === 'type' &&
-      msType.typing && msType.typing.running === false &&             // 测试模式不装真钩子
-      back.m === 'main' && back.mode === 'main' && back.body === 'main' && back.frame === -1 &&
-      msBack.visualMode === 'main' && msBack.typing.running === false;
+    // 原来这里是一长串 `&&` 直接 return —— 失败时只知道"错了"，不知道错在哪一条。
+    // 改成具名断言（与其余场景同一套 assertMap），偶发才有被定位的可能。
+    return assertMap([
+      { name: `进场景前是主形态(${r.mode0})`, ok: r.mode0 === 'main' },
+      { name: `切到形态三生效(got=${r.got},mode1=${r.mode1})`, ok: r.got === 'type' && r.mode1 === 'type' },
+      { name: `进形态三先显示第三张图(body=${r.body1},frame=${r.frame1})`, ok: r.body1 === 'typeIdle' && r.frame1 === -1 },
+      { name: `换图原地不动(底边${r.bc1.b} vs ${r.bc0.b}，横中${r.bc1.cx} vs ${r.bc0.cx})`, ok: near(r.bc1.b, r.bc0.b) && near(r.bc1.cx, r.bc0.cx) },
+      { name: '形态三期间不眨眼（闭眼图属主形象）', ok: r.blinkSuppressed === true },
+      { name: `逐键交替必须是 0,1,0（实为 ${frames.join(',')}）`, ok: frames.join(',') === '0,1,0' },
+      { name: `第三下后停在图1(mid.typingFrame=${mid.typingFrame})`, ok: mid.typingFrame === 0 },
+      { name: `节拍期间不位移(${(mid.pet.y + mid.pet.h).toFixed(2)} vs ${r.bc0.b.toFixed(2)})`, ok: near(mid.pet.y + mid.pet.h, r.bc0.b) },
+      { name: `停手越过阈值回第三张图(frame=${after.frame},body=${after.body})`, ok: after.frame === -1 && after.body === 'typeIdle' },
+      { name: `停手后仍原位(${after.bc.b} vs ${r.bc0.b})`, ok: near(after.bc.b, r.bc0.b) && near(after.bc.cx, r.bc0.cx) },
+      { name: `再起打必须从图1起（相位复位，实为 ${again}）`, ok: again === 0 },
+      { name: `主进程收到形态同步为 type(${msType.visualMode})`, ok: msType.visualMode === 'type' },
+      { name: 'TEST_MODE 下不装真键盘钩子', ok: !!(msType.typing) && msType.typing.running === false },
+      { name: `切回主形态生效(m=${back.m},mode=${back.mode},body=${back.body},frame=${back.frame})`, ok: back.m === 'main' && back.mode === 'main' && back.body === 'main' && back.frame === -1 },
+      { name: `主进程收到形态同步回 main(${msBack.visualMode})`, ok: msBack.visualMode === 'main' && msBack.typing.running === false },
+    ]);
   },
 
   /**
