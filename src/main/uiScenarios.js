@@ -61,14 +61,32 @@ const scenarios = {
     results.push({ name: '基线弹簧 sy≈1', ok: Math.abs(base - 1) < 0.03 });
 
     // 摸头 → sy 出现明显压缩（Q 弹）
+    // 采样**必须在渲染层逐帧做**。原来这里是主进程每 45ms 打一次 executeJavaScript 往返，
+    // 机器负载高时单次往返就能吃掉上百毫秒，14 次采样会整体越过弹簧波谷 —— 真机 CI 上
+    // 就这样偶发过 `min=0.993`（动画其实播了，是采样漏了）。
+    // 顺带把采样帧数一起返回：帧数太少说明"压根没在渲染"，那要判**测量不可信**，
+    // 不能拿它当产品结论（与 occlusion 场景的对照组门槛同一条思路）。
     await js('window.__petTest.headpat()');
-    let minSy = 1;
-    for (let i = 0; i < 14; i++) {
-      await sleep(45);
-      const s = await js('window.__petState().animScale.sy');
-      if (s < minSy) minSy = s;
-    }
-    results.push({ name: `摸头压缩明显(min=${minSy.toFixed(3)}<0.95)`, ok: minSy < 0.95 });
+    // 逐帧采样在渲染层跑，结果留在 window.__pat 里；主进程只轮询"跑完了没"。
+    // （不能图省事让 executeJavaScript 直接 resolve 一个对象回来 —— 返回 Promise 会被
+    //   结构化克隆拒收，报 "An object could not be cloned"，实测踩过。）
+    await js(`(() => {
+      window.__pat = { min: 1, frames: 0, done: false };
+      const t0 = performance.now();
+      (function loop() {
+        const s = window.__petState().animScale.sy;
+        window.__pat.frames++;
+        if (s < window.__pat.min) window.__pat.min = s;
+        if (performance.now() - t0 >= 1200) { window.__pat.done = true; return; }
+        requestAnimationFrame(loop);
+      })();
+      return true;
+    })()`);
+    await waitFor(js, 'window.__pat && window.__pat.done', 6000, '逐帧采样跑完 1200ms');
+    const pat = await js('window.__pat');
+    console.log(`[scenario] anim 摸头逐帧实测：${pat.frames} 帧/1200ms，最小 sy=${pat.min.toFixed(4)}`);
+    results.push({ name: `摸头期间逐帧采样够密（${pat.frames} 帧/1200ms；太少=没在渲染，测不了）`, ok: pat.frames >= 20 });
+    results.push({ name: `摸头压缩明显(min=${pat.min.toFixed(3)}<0.95)`, ok: pat.min < 0.95 });
 
     // 一段时间后弹簧收敛回 1（动画没有失控/停止）
     await sleep(2400);
