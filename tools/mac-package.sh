@@ -62,17 +62,25 @@ ok "Electron 主程序就位：$(file "$EB" | sed 's/.*: //')"
 chmod +x "$OUT"/*.command 2>/dev/null
 ok "启动器可执行位已置"
 
+# ---------- 1.5 构建 macOS 打字探针（形态三）----------
+# 必须在签名**之前**：它是随包分发的可执行文件，漏签就等于在 M2 上放一颗必崩的雷。
+echo ""; echo "===== [1.5] 构建打字探针 keybeat ====="
+sh tools/build-mac-helper.sh --force || die "打字探针编译失败（形态三在 mac 上会置灰）"
+[ -f "$OUT/src/main/mac/keybeat" ] || die "打包目录里没有 keybeat（装配漏了 src/main/mac）"
+ok "打字探针已随包就位"
+
 # ---------- 3. ad-hoc 签名 ----------
 echo ""; echo "===== [3] ad-hoc 签名（codesign -s -）====="
 APP="$OUT/node_modules/electron/dist/Electron.app"
 LIST="$OUT/.signlist"; FAILS="$OUT/.signfail"
 : > "$LIST"; : > "$FAILS"
 
-# ① 先签 bundle **外面**的原生文件（npm 包装进来的 .node/.dylib）—— --deep 看不到它们
-#    ⚠ 必须 -print0 + read -d ''：`Electron Framework.framework` 这类路径带空格
-find "$OUT/node_modules" -path "*Electron.app" -prune -o \
-     \( -type f \( -name '*.node' -o -name '*.dylib' \) \) -print0 2>/dev/null \
+# ① 先签 bundle **外面**的可执行文件：npm 装进来的 .node/.dylib，以及我们自己的 keybeat 探针。
+#    （--deep 只处理 .app 内部的嵌套代码，这些它一概看不到）
+find "$OUT" -path "*Electron.app" -prune -o \
+     \( -type f \( -name '*.node' -o -name '*.dylib' -o -perm -u+x \) \) -print0 2>/dev/null \
 | while IFS= read -r -d '' f; do
+    file -b "$f" 2>/dev/null | grep -q 'Mach-O' || continue
     printf '%s\n' "$f" >> "$LIST"
     codesign --force --sign - "$f" >/dev/null 2>&1 || printf '%s\n' "$f" >> "$FAILS"
   done
