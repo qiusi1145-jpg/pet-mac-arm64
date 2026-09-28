@@ -39,13 +39,17 @@ test('normalizeSettings: 未知/畸形字段被丢弃，合法字段保留', () 
   assert.equal(s.region.height, null);
 });
 
-test('normalizeSettings: snapEnabled / physicsEnabled 默认开，可显式关', () => {
-  assert.equal(defaultSettings().snapEnabled, true);
+test('normalizeSettings: physicsEnabled 默认开，可显式关', () => {
   assert.equal(defaultSettings().physicsEnabled, true);
-  assert.equal(normalizeSettings({}).snapEnabled, true);
   assert.equal(normalizeSettings({}).physicsEnabled, true);
-  assert.equal(normalizeSettings({ snapEnabled: false }).snapEnabled, false);
   assert.equal(normalizeSettings({ physicsEnabled: false }).physicsEnabled, false);
+});
+
+// 吸附功能已删除；老 settings.json 里残留的 snapEnabled 必须被静默忽略（不能报错也不能复活成开关）
+test('normalizeSettings: 老数据残留的 snapEnabled 被忽略', () => {
+  const out = normalizeSettings({ snapEnabled: false });
+  assert.equal(out.snapEnabled, undefined);
+  assert.equal(out.physicsEnabled, true);
 });
 
 /* ================= 待办 ================= */

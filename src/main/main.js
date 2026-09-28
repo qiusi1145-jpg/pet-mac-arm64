@@ -31,7 +31,7 @@ const llmM = require('../shared/chat/llm');
 const { ACCENTS, normalizeAccentPref } = require('../shared/uiTheme');
 const PS = require('../shared/pomodoroStats');          // 番茄钟学习记录/成就（纯函数）
 const pomoStatsStore = require('./pomodoroStatsStore'); // 同上，持久化（data/pomodoro-stats.json）
-const { WinEnum, isSystemWindow } = require('./winenum');
+const { WinEnum } = require('./winenum');
 const { TypingMonitor } = require('./typing');
 const { normalizeVisualMode } = require('../shared/status'); // 视觉形态枚举（与渲染层同一份定义）
 
@@ -296,9 +296,6 @@ class PetApp {
 
     this.setupIpc();
     this.createTray();
-    // 吸附用的窗口枚举 exe 提前编译/校验：留到第一次松手吸附才编译的话，
-    // 那一下同步编译会卡主进程约 1 秒（现在 list() 本身已是异步 spawn）。
-    this.winEnum.ensure();
     this.startCursorPush();
     this.startTodoChecker();
     this.scheduleReminder();
@@ -636,22 +633,6 @@ class PetApp {
       this.visualMode = normalizeVisualMode(mode);
       this.syncTypingMonitor();
     });
-
-    // 窗口枚举（吸附）。list() 异步 spawn（不阻塞主进程事件循环），handle 自动等待 Promise。
-    ipcMain.handle('enumerate:windows', async () => {
-      if (!this.win) return [];
-      const selfId = this.selfNativeId();
-      const wins = await this.winEnum.list();
-      return wins.filter((w) => w.id !== selfId && !isSystemWindow(w));
-    });
-  }
-
-  selfNativeId() {
-    try {
-      const buf = this.win.getNativeWindowHandle();
-      const big = buf.readBigUInt64LE(0);
-      return big.toString();
-    } catch { return '-1'; }
   }
 
   /** 相对路径 → 绝对路径：settings 里的相对路径以数据目录为基准；绝对路径原样返回。 */
@@ -1611,14 +1592,6 @@ class PetApp {
       {
         label: this.locked ? '解锁（保底入口）' : '锁定并保持始终置于顶层',
         click: () => self.setLocked(!self.locked),
-      },
-      {
-        label: '窗口顶沿吸附', type: 'checkbox', checked: this.store.get().snapEnabled !== false,
-        click: (item) => {
-          const v = !!item.checked;
-          this.store.update({ snapEnabled: v }).saveSoon();
-          if (self.win && !self.win.isDestroyed()) self.win.webContents.send('snap:enabled', { enabled: v });
-        },
       },
       {
         label: '物理模拟（甩动/坠落）', type: 'checkbox', checked: this.store.get().physicsEnabled !== false,

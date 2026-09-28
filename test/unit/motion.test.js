@@ -6,7 +6,6 @@ const {
   GestureTracker, simulate,
   springParams, integrateSpring, impulse,
   step, atRest,
-  chooseSnapTarget, shouldDetach,
 } = require('../../src/shared/motion');
 const { CFG } = require('../../src/shared/config');
 
@@ -112,6 +111,22 @@ test('物理：碰撞盒落地：实体像素贴地，透明边距悬出地面�
   assert.ok(Math.abs(s.y - expectY) < 0.5, `y=${s.y} 应为 ${expectY}（整图落地会是 ${WORLD.h - 96}，视觉悬空 4px）`);
 });
 
+// 帧率无关的落地收敛。macOS 软件渲染实测 ~30fps 时宠物会卡在"贴地小弹跳"的极限环里
+// 永远回不了待机（一步重力攒下的速度顶穿了速度阈值）；低帧率的 Windows 机器同样会中。
+test('物理：低帧率下也必须收敛到贴地静止（回弹判据用弹起高度，不用速度）', () => {
+  for (const fps of [60, 30, 15]) {
+    const dt = 1 / fps;
+    let s = { x: 500, y: 0, vx: 0, vy: 0, grounded: false, w: 96, h: 96, col: { ...COL } };
+    let settled = -1;
+    for (let i = 0; i < Math.ceil(8 * fps); i++) {   // 最多给 8 秒
+      s = step(s, dt, WORLD).s;
+      if (atRest(s)) { settled = i; break; }
+    }
+    assert.ok(settled >= 0, `${fps}fps 下 8 秒内未收敛（vy=${s.vy.toFixed(2)} grounded=${s.grounded}）`);
+    assert.ok(settled <= 4 * fps, `${fps}fps 收敛用了 ${(settled / fps).toFixed(2)}s，超过 4s 上限`);
+  }
+});
+
 test('物理：碰撞盒跨步自包含：返回值必须带 col（红线：丢字段 = 边界静默失效）', () => {
   const r = step({ x: 0, y: 0, vx: 100, vy: 0, grounded: false, w: 96, h: 96, col: { ...COL } }, 1 / 60, WORLD);
   assert.deepEqual(r.s.col, COL);
@@ -176,57 +191,6 @@ test('弹簧：挤压后会过冲（Q弹拉长）且幅度受控、不发散', (
   assert.ok(minS < 0.92, `压缩明显: min=${minS}`);
   assert.ok(maxS > 1.015 && maxS < 1.2, `过冲可见但受控: max=${maxS}`);
   assert.ok(Math.abs(st.s - 1) < 1e-3, '最终回到 1');
-});
-
-/* ================= 窗口吸附 ================= */
-
-const W = (p) => ({ id: p.id || 'w', title: p.title || '', cls: 'foo', minimized: false, left: 100, top: 200, right: 700, bottom: 900, ...p });
-const P = CFG.physics; // snapProximityY / snapMarginX
-
-test('吸附：锚点水平落在窗口内、垂直贴近顶沿 → 命中该窗口', () => {
-  const win = W({ id: 'a', left: 100, right: 700, top: 200 });
-  const hit = chooseSnapTarget({ x: 400, y: 200 }, [win]);
-  assert.equal(hit, win);
-});
-
-test('吸附：多个候选取垂直距离最近的', () => {
-  const far = W({ id: 'far', left: 900, right: 1500, top: 200 });
-  const near = W({ id: 'near', left: 300, right: 500, top: 210 });
-  const closer = W({ id: 'closer', left: 350, right: 450, top: 202 });
-  const hit = chooseSnapTarget({ x: 400, y: 200 }, [far, near, closer]);
-  assert.equal(hit && hit.id, 'closer');
-});
-
-test('吸附：锚点虽贴顶但水平越出窗口范围（超出余量）→ 不命中', () => {
-  const win = W({ left: 500, right: 700, top: 200 });
-  assert.equal(chooseSnapTarget({ x: 400, y: 200 }, [win]), null);
-});
-
-test('吸附：水平在范围内但垂直太远（超过 snapProximityY）→ 不命中', () => {
-  const win = W({ left: 300, right: 500, top: 200 });
-  assert.equal(chooseSnapTarget({ x: 400, y: 200 + P.snapProximityY + 5 }, [win]), null);
-});
-
-test('吸附：允许水平落在窗口边缘外一小段余量内（snapMarginX）', () => {
-  const win = W({ left: 500, right: 700, top: 200 });
-  const x = 500 - P.snapMarginX;
-  assert.ok(chooseSnapTarget({ x, y: 200 }, [win]), '应命中');
-  assert.equal(chooseSnapTarget({ x: 500 - P.snapMarginX - 1, y: 200 }, [win]), null, '超出余量不命中');
-});
-
-test('吸附：无候选/空列表 → null', () => {
-  assert.equal(chooseSnapTarget({ x: 400, y: 200 }, []), null);
-  assert.equal(chooseSnapTarget({ x: 400, y: 200 }, [W({ left: 10, right: 20, top: 30 })]), null);
-});
-
-test('吸附中脱落判定：窗口消失/最小化/移动 → 需坠落；静止且同几何 → 不脱落', () => {
-  const snapped = { handle: 'w', left: 100, top: 200, right: 700, bottom: 900, minimized: false };
-  assert.ok(shouldDetach(snapped, null), '窗口没了要掉');
-  assert.ok(!shouldDetach(snapped, { ...snapped }), '没变不掉');
-  assert.ok(shouldDetach(snapped, { ...snapped, minimized: true }), '最小化要掉');
-  assert.ok(shouldDetach(snapped, { ...snapped, top: 205 }), '被移动(上下)要掉');
-  assert.ok(shouldDetach(snapped, { ...snapped, left: 120 }), '被移动(左右)要掉');
-  assert.ok(shouldDetach(snapped, { ...snapped, bottom: 850 }), '被缩放要掉');
 });
 
 /* ================= 手势 ================= */

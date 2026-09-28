@@ -1,47 +1,19 @@
 'use strict';
 /**
- * 窗口枚举（主进程）：用于“吸附到其它窗口”的候选与吸附后的跟随/脱落检测。
+ * 窗口扩展样式修改器（主进程，仅 win32）。
  *
- * 方案：不依赖任何原生 Node 模块 —— 用 .NET Framework 自带 csc.exe 把内置的
- * 一小段 C#（Win32 EnumWindows）一次性编译成 exe 到 userData 下，之后每次
- * spawn 该 exe 解析输出即可（单次约几毫秒）。编译失败则降级为空列表并告警
- * （吸附功能失效，但应用其余功能不受影响）。
+ * 用途只有一个：给宠物窗写 `WS_EX_TOOLWINDOW` —— README「不冻结其它 Chromium 窗口」三层防护的
+ * 根治手段（Chromium 系应用的遮挡检测会永久跳过工具窗口）。**不是**窗口枚举：吸附功能已于
+ * 2026-09-28 随 macOS 移植决策整体删除，原先住在这个文件里的 EnumWindows 那半已移除。
+ *
+ * 方案沿用"零原生依赖"：用 .NET Framework 自带 csc.exe 把下面一小段 C# 一次性编译成 exe
+ * 到 userData 下，之后每次 spawn 该 exe（编译失败则静默跳过，只是少一层防护，不影响功能）。
+ *
+ * 文件名保留 `winenum.js` 只为少改引用（`typing.js` 从这里借 `findCsc`）；名字与职责已不符。
  */
 const fs = require('fs');
 const path = require('path');
 const { execFile, spawnSync } = require('child_process');
-
-const CS_SOURCE = `
-using System;
-using System.Runtime.InteropServices;
-using System.Text;
-class WinEnum {
-  delegate bool EProc(IntPtr h, IntPtr l);
-  [DllImport("user32.dll")] static extern bool EnumWindows(EProc cb, IntPtr l);
-  [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
-  [DllImport("user32.dll")] static extern bool IsIconic(IntPtr h);
-  [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern int GetWindowText(IntPtr h, StringBuilder s, int m);
-  [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out RECT r);
-  [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern int GetClassName(IntPtr h, StringBuilder s, int m);
-  [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr h, int a, out bool v, int sz);
-  [StructLayout(LayoutKind.Sequential)] struct RECT { public int Left, Top, Right, Bottom; }
-  static string Clean(string s){ s=(s??"").Replace('\\t',' ').Replace('\\r',' ').Replace('\\n',' '); return s; }
-  static bool Visit(IntPtr h, IntPtr l){
-    if(!IsWindowVisible(h)) return true;
-    RECT r; GetWindowRect(h, out r);
-    if(r.Right<=r.Left || r.Bottom<=r.Top) return true;      // 退化/最小化放到负坐标
-    bool iconic = IsIconic(h);
-    bool cloaked = false;
-    DwmGetWindowAttribute(h, 14, out cloaked, Marshal.SizeOf(typeof(bool))); // DWMWA_CLOAKED
-    if(cloaked) return true;                                   // 隐藏标签页等：吸附无意义
-    var t = new StringBuilder(512); GetWindowText(h, t, 512);
-    var c = new StringBuilder(256); GetClassName(h, c, 256);
-    Console.WriteLine(h.ToInt64()+"\\t"+Clean(c.ToString())+"\\t"+Clean(t.ToString())+"\\t"+r.Left+"\\t"+r.Top+"\\t"+r.Right+"\\t"+r.Bottom+"\\t"+(iconic?"1":"0"));
-    return true;
-  }
-  static int Main(){ EnumWindows(Visit, IntPtr.Zero); return 0; }
-}
-`;
 
 /** 找 .NET Framework 的 csc.exe（Windows 11 自带 4.x）。 */
 function findCsc() {
@@ -85,32 +57,7 @@ class WinStyle {
 class WinEnum {
   constructor(userData) {
     this.userData = userData;
-    this.exe = null;
     this.styleExe = null;
-    this.compileError = null;
-  }
-
-  /** 确保已编译出枚举 exe；返回是否可用。 */
-  ensure(userData = this.userData) {
-    if (this.exe) return true;
-    const dir = path.join(userData, 'winenum');
-    const exe = path.join(dir, 'winenum.exe');
-    if (fs.existsSync(exe)) { this.exe = exe; return true; }
-    try {
-      fs.mkdirSync(dir, { recursive: true });
-      const src = path.join(dir, 'winenum.cs');
-      fs.writeFileSync(src, CS_SOURCE, 'utf8');
-      const csc = findCsc();
-      if (!csc) throw new Error('csc.exe not found');
-      const r = spawnSync(csc, ['/nologo', '/optimize+', '/target:exe', `/out:${exe}`, src], { encoding: 'utf8', windowsHide: true });
-      if (r.status !== 0) throw new Error((r.stderr || r.stdout || 'compile fail').slice(0, 400));
-      this.exe = exe;
-      return true;
-    } catch (e) {
-      this.compileError = e.message;
-      console.error('[winenum] 编译失败（吸附将不可用）：', e.message);
-      return false;
-    }
   }
 
   /** 确保已编译出样式修改 exe；返回 exe 路径或 null。 */
@@ -149,55 +96,6 @@ class WinEnum {
       });
     });
   }
-
-  /**
-   * 枚举可见顶层窗口（异步 spawn：不阻塞主进程事件循环——松手吸附/吸附轮询都会走到
-   * 这里，同步 spawn 会在主进程卡几十毫秒，叠加穿透转发的低级鼠标钩子还会拖慢全系统
-   * 鼠标）。返回形如：
-   * [{ id, cls, title, left, top, right, bottom, minimized }]
-   * 过滤掉无尺寸的。系统外壳等留给调用方过滤。
-   */
-  list(userData = this.userData) {
-    return new Promise((resolve) => {
-      if (!this.ensure(userData)) return resolve([]);
-      execFile(this.exe, [], { encoding: 'utf8', windowsHide: true, maxBuffer: 1 << 20 }, (err, out) => {
-        if (err) {
-          console.error('[winenum] enumerate failed', err.message);
-          return resolve([]);
-        }
-        resolve(this.parse(out));
-      });
-    });
-  }
-
-  /** 解析 exe 的 TSV 输出为窗口列表。 */
-  parse(out) {
-    const wins = [];
-    for (const line of String(out).split(/\r?\n/)) {
-      const p = line.split('\t');
-      if (p.length < 8) continue;
-      const [id, cls, title, left, top, right, bottom, mini] = p;
-      const L = Number(left), T = Number(top), R = Number(right), B = Number(bottom);
-      if (!Number.isFinite(L + T + R + B)) continue;
-      if (R <= L || B <= T) continue;
-      wins.push({
-        id, cls, title,
-        left: L, top: T, right: R, bottom: B,
-        minimized: mini === '1',
-      });
-    }
-    return wins;
-  }
 }
 
-/** 系统外壳/无关窗口的排除。仅过滤确定是桌面/任务栏的系统表面。 */
-function isSystemWindow(w) {
-  const cls = (w.cls || '').toLowerCase();
-  const title = (w.title || '').toLowerCase();
-  if (cls === 'progman' || cls === 'workerw' || cls === 'shelldll_defview' || cls === 'shell_traywnd') return true;
-  if (cls === 'windows.ui.core.corewindow') return true;
-  if (title === 'program manager') return true;
-  return false;
-}
-
-module.exports = { WinEnum, isSystemWindow, findCsc };
+module.exports = { WinEnum, findCsc };

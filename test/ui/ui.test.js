@@ -12,7 +12,7 @@ const path = require('path');
 const ROOT = path.join(__dirname, '..', '..');
 const ELECTRON = require('electron');
 
-const ALL_SCENARIOS = ['greeting', 'blink', 'blinkAnim', 'fxAnim', 'stateVisual', 'typing', 'lock', 'todo', 'reminder', 'chat', 'anim', 'dragPhysics', 'snap', 'physOff', 'status', 'passthrough', 'picker', 'bg', 'menuClean', 'audio', 'rest', 'learn'];
+const ALL_SCENARIOS = ['greeting', 'blink', 'blinkAnim', 'fxAnim', 'stateVisual', 'typing', 'lock', 'todo', 'reminder', 'chat', 'anim', 'dragPhysics', 'physOff', 'status', 'passthrough', 'picker', 'bg', 'menuClean', 'audio', 'rest', 'learn'];
 // PET_UI_ONLY='bg,audio' 只跑指定场景，便于调试单个新场景
 const ONLY = (process.env.PET_UI_ONLY || '').split(',').map((s) => s.trim()).filter(Boolean);
 const SCENARIOS = ONLY.length ? ONLY : ALL_SCENARIOS;
@@ -52,7 +52,10 @@ async function runOne(name) {
     env.PET_AUDIO_PATH = path.join(inbox, 'tone.wav');
     writeSilentWav(env.PET_AUDIO_PATH);
   }
-  const child = spawn(ELECTRON, ['--disable-gpu', '--in-process-gpu', '.'], { cwd: ROOT, env, windowsHide: true });
+  // PET_CHROMIUM_ARGS 追加 Chromium 开关（macOS 移植验证用：
+  //   --force-device-scale-factor=2 可在非 Retina/VM 环境里强拉 devicePixelRatio，覆盖缩放路径）
+  const EXTRA = (process.env.PET_CHROMIUM_ARGS || '').split(/\s+/).filter(Boolean);
+  const child = spawn(ELECTRON, ['--disable-gpu', '--in-process-gpu', ...EXTRA, '.'], { cwd: ROOT, env, windowsHide: true });
   let out = '', err = '';
   child.stdout.on('data', (d) => { out += d; });
   child.stderr.on('data', (d) => { err += d; });

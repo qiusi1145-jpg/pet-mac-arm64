@@ -28,9 +28,7 @@ function defaultSettings() {
     status: null,
     // 界面
     pillCollapsed: false,
-    // 是否允许吸附到其它窗口顶沿
-    snapEnabled: true,
-    // 是否允许物理模拟（甩动抛掷 / 失去支撑坠落）；关闭后人物拖到哪停在哪，但吸附仍工作。
+    // 是否允许物理模拟（甩动抛掷 / 松手坠落）；关闭后人物拖到哪停在哪。
     physicsEnabled: true,
     // 待办清单
     todos: [], // [{id,text,due,done,important}]
@@ -84,7 +82,6 @@ function normalizeSettings(raw) {
   }
   out.status = raw.status && typeof raw.status === 'object' ? { ...raw.status } : null;
   out.pillCollapsed = !!raw.pillCollapsed;
-  out.snapEnabled = raw.snapEnabled !== false;
   out.physicsEnabled = raw.physicsEnabled !== false;
   out.todos = normalizeTodos(raw.todos);
   out.chatRules = normalizeChatRules(raw.chatRules);

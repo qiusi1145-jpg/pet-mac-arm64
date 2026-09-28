@@ -2,7 +2,7 @@
   "name": "deskpet",
   "productName": "桌宠",
   "version": "1.0.0",
-  "description": "A Windows desktop pet: upload a PNG, pet it, feed it, throw it around, snap it to windows.",
+  "description": "A desktop pet (Windows + macOS): upload a PNG, pet it, feed it, throw it around.",
   "private": true,
   "main": "src/main/main.js",
   "scripts": {

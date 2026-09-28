@@ -720,52 +720,6 @@ const scenarios = {
     return assertMap(results);
   },
 
-  /** 窗口吸附：低速释放靠近某窗口顶沿 → 挂到该顶沿；窗口消失 → 失去支撑坠落。 */
-  async snap(ctx) {
-    const { js, sleep } = ctx;
-    await waitFor(js, 'window.__petReady && window.__petState().petLoaded', 12000, 'renderer ready + pet');
-    const results = [];
-
-    const st0 = await js('window.__petState()');
-    const anchor = st0.pet.anchor;      // 实体像素中心（内容坐标）
-    const petH = st0.pet.h;
-    const winTop = 260;                 // 假窗口顶沿（屏幕坐标，region 在 0,0）
-    // 摆好宠物：让锚点恰落在窗口顶沿附近
-    const placeY = winTop - anchor.y - 8;
-    await js(`window.__petTest.placePet(${st0.pet.x}, ${placeY})`);
-    await js(`window.__petTest.setSnapWindows([{ id:'fake-win', cls:'Notepad', title:'test', left:0, top:${winTop}, right:${st0.world.w}, bottom:900, minimized:false }])`);
-
-    const snapped = await js('window.__petTest.trySnap()');
-    results.push({ name: '低速靠近窗口顶沿 → 吸附成功', ok: snapped === true });
-    const info = await js('window.__petTest.snapInfo()');
-    results.push({ name: '吸附记录窗口句柄', ok: !!info && info.handle === 'fake-win' });
-    // 碰撞盒底边贴窗口顶：pet.y(内容) = (top - originY) - (col.oy + col.h)
-    const st = await js('window.__petState()');
-    const colBottom = st.pet.col.oy + st.pet.col.h;
-    results.push({
-      name: `吸附后实体底边贴窗口顶(y=${st.pet.y.toFixed(0)}≈${winTop - colBottom})`,
-      ok: Math.abs(st.pet.y - (winTop - colBottom)) < 1,
-    });
-
-    // 窗口仍在 → 不脱落
-    await js('window.__petTest.pollSnap()');
-    await sleep(30);
-    const still = await js('window.__petTest.snapInfo()');
-    results.push({ name: '窗口未移动/关闭 → 保持吸附', ok: !!still });
-
-    // 窗口消失 → 失去支撑坠落（物理接管）
-    await js('window.__petTest.setSnapWindows([])');
-    await js('window.__petTest.pollSnap()');
-    await sleep(40);
-    const st2 = await js('window.__petState()');
-    results.push({ name: `窗口消失 → 解除吸附并坠落(phys=${st2.physActive})`, ok: st2.physActive === true && !st2.snap });
-
-    await js('window.__petTest.setSnapWindows(null)');
-    // 等落地回待机（不要残留物理/吸附干扰后续）
-    await waitFor(js, 'window.__petState().physActive === false', 8000, '落地静止');
-    return assertMap(results);
-  },
-
   /** 状态系统 + 区域面板：喂食涨饱食、互动涨情绪、归零半透明、面板参与命中判定。 */
   async status(ctx) {
     const { js, sleep } = ctx;
@@ -1070,17 +1024,15 @@ const scenarios = {
   },
 
   /**
-   * 物理模拟开关（新功能）：关闭后释放/甩动都不再启动物理，人物停在原地不下坠；
-   * 但“低速贴近窗口顶沿 → 吸附”仍工作（吸附独立于物理开关）；已吸附窗口消失时也不坠落。
+   * 物理模拟开关：关闭后释放/甩动都不再启动物理，人物停在原地不下坠；
+   * 重新打开后同一位置的低速释放应当正常坠落（验证开关真的接回了路由）。
    */
   async physOff(ctx) {
     const { js, sleep } = ctx;
     await waitFor(js, 'window.__petReady && window.__petState().petLoaded', 12000, 'renderer ready + pet');
     const results = [];
 
-    // 关掉物理；先注入“没有窗口”，避免吸附误触影响“停原地”的断言
     await js('window.__petTest.setPhysicsEnabled(false)');
-    await js('window.__petTest.setSnapWindows([])');
     let st = await js('window.__petState()');
     results.push({ name: '物理开关已关闭(physicsEnabled=false)', ok: st.physicsEnabled === false });
 
@@ -1104,37 +1056,24 @@ const scenarios = {
     st = await js('window.__petState()');
     results.push({
       name: `物理关·甩动也不抛(phys=${st.physActive}, y不变)`,
-      ok: st.physActive === false && Math.abs(st.pet.y - airY) < 0.5 && st.snap === null,
+      ok: st.physActive === false && Math.abs(st.pet.y - airY) < 0.5,
     });
 
-    // ③ 物理关下吸附仍工作：靠近假窗口顶沿、低速释放（走 routeRelease）→ 吸上，且不坠落
-    const anchor = st.pet.anchor;
-    const petH = st.pet.h;
-    const winTop = 180;
-    const placeY = winTop - anchor.y - 8;
-    await js(`window.__petTest.placePet(${x0}, ${placeY})`);
-    await js(`window.__petTest.setSnapWindows([{ id:'fake-win', cls:'Notepad', title:'test', left:0, top:${winTop}, right:${st.world.w}, bottom:900, minimized:false }])`);
-    await js('window.__petTest.releaseRel(0, 0, 60)'); // 低速 → routeRelease 仍尝试吸附
-    await waitFor(js, 'window.__petTest.snapInfo() !== null', 3000, '物理关·低速释放仍可吸附');
-    const info = await js('window.__petTest.snapInfo()');
+    // ③ 重新打开物理 → 同一位置的低速释放应当坠落并回到地面（开关确实接回路由）
+    await js('window.__petTest.setPhysicsEnabled(true)');
+    await js(`window.__petTest.placePet(${x0}, ${airY})`);
+    await js('window.__petTest.releaseRel(0, 0, 60)');
+    await waitFor(js, 'window.__petState().physActive === true', 3000, '物理关恢复后低速释放启动物理');
+    await waitFor(js, 'window.__petState().physActive === false', 8000, '落地静止');
     st = await js('window.__petState()');
+    // 像素级碰撞：落地静止位 = 区域高 - 碰撞盒底边偏移（不是 区域高 - 图高）
+    const colBottom = st.pet.col.oy + st.pet.col.h;
+    const landY = st.world.h - colBottom;
     results.push({
-      name: `物理关·吸附仍工作(handle=${info && info.handle}, phys=${st.physActive})`,
-      ok: !!info && info.handle === 'fake-win' && st.physActive === false,
+      name: `物理开·低速释放坠落并落地(y=${st.pet.y.toFixed(0)}≈${Math.round(landY)})`,
+      ok: Math.abs(st.pet.y - landY) < 3,
     });
 
-    // ④ 假窗口消失 → 解除吸附；但物理关 → 不坠落（悬在原处）
-    const snappedY = st.pet.y;
-    await js('window.__petTest.setSnapWindows([])');
-    await js('window.__petTest.pollSnap()');
-    await sleep(150);
-    st = await js('window.__petState()');
-    results.push({
-      name: `物理关·吸附解除但不坠落(y=${st.pet.y.toFixed(0)}≈${snappedY.toFixed(0)}, snap=${!!st.snap})`,
-      ok: st.snap === null && st.physActive === false && Math.abs(st.pet.y - snappedY) < 0.5,
-    });
-
-    await js('window.__petTest.setSnapWindows(null)');
     return assertMap(results);
   },
 

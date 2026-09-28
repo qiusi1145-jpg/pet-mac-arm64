@@ -291,9 +291,12 @@ function step(s, dt, world, opts = {}) {
     floorTouched = true;
     if (o.vy > 0) {
       const speedY = Math.abs(o.vy);
-      // 大速度 → 回弹；小速度 → 直接贴地。
-      if (speedY > P.stopSpeedY) {
-        o.vy = -o.vy * P.restitution;
+      const bounced = speedY * P.restitution;
+      // 大回弹 → 继续弹；回弹高度不足 settleBouncePx → 直接贴地。
+      // 用「能弹起多高」（v²/2g）而不是「速度多大」判收敛：后者在低帧率下会被一步
+      // 重力攒下的速度顶穿，导致贴地无限小弹跳、永远回不了待机（见 config.settleBouncePx）。
+      if (bounced * bounced >= 2 * P.gravity * P.settleBouncePx) {
+        o.vy = -bounced;
         ny = maxY;
       } else {
         o.vy = 0;
@@ -324,52 +327,6 @@ function atRest(s, opts = {}) {
   return !!s.grounded && Math.abs(s.vx) <= P.stopSpeedX && Math.abs(s.vy) <= P.stopSpeedY;
 }
 
-/* ================= 窗口吸附 =================
- * 窗口几何使用屏幕坐标（与主进程枚举结果一致）：{ handle,left,top,right,bottom,title }。
- */
-
-/**
- * 在所有候选窗口里选一个吸附目标。
- * 锚点水平位于窗口范围内（允许一点余量）且垂直贴近顶沿 → 候选；垂直最贴者优先。
- * @param {{x,y}} anchor 锚点（屏幕坐标）
- * @param {Array} wins 候选窗口（已过滤掉自身/桌面/极小窗口）
- * @returns {object|null}
- */
-function chooseSnapTarget(anchor, wins, opts = {}) {
-  const P = { ...CFG.physics, ...opts };
-  let best = null;
-  let bestScore = Infinity;
-  for (const w of wins) {
-    const { left, top, right } = w;
-    if (anchor.x < left - P.snapMarginX || anchor.x > right + P.snapMarginX) continue;
-    const dy = Math.abs(anchor.y - top);
-    if (dy <= P.snapProximityY) {
-      const score = dy;
-      if (score < bestScore) {
-        bestScore = score;
-        best = w;
-      }
-    }
-  }
-  return best;
-}
-
-/**
- * 吸附中是否应解除（窗口消失/最小化/移动）——由主进程轮询后判断。
- * @returns {boolean} true = 需要坠落
- */
-function shouldDetach(snapped, winNow) {
-  if (!winNow) return true;
-  if (snapped.minimized !== winNow.minimized && winNow.minimized) return true;
-  // 窗口几何发生变化（移动/大小）→ 脱离（规格：移动即从原位坠落）
-  const moved =
-    Math.abs(winNow.left - snapped.left) > 1 ||
-    Math.abs(winNow.top - snapped.top) > 1 ||
-    Math.abs(winNow.right - snapped.right) > 1 ||
-    Math.abs(winNow.bottom - snapped.bottom) > 1;
-  return moved;
-}
-
 module.exports = {
   GestureTracker,
   simulate,
@@ -381,6 +338,4 @@ module.exports = {
   step,
   atRest,
   normCol,
-  chooseSnapTarget,
-  shouldDetach,
 };
