@@ -40,7 +40,12 @@ jobs:
 
       # 原生出包：编译打字探针 → 装依赖 → ad-hoc 签名（由内向外）→ 清隔离 → 逐个 Mach-O 校验
       # tee 到 $RUNNER_TEMP 是为了让最后那步能把日志贴成 commit 评论（见文件末尾的说明）。
+      #
+      # ⚠ shell: bash 不是可有可无的：GitHub 步骤**默认** shell 是 `bash -e {0}`，不带 pipefail，
+      #   于是 `cmd | tee` 的退出码取的是 tee 的 0 —— 实测这样把一次真实的 UI 失败洗成了
+      #   step success + job.status success。指定 shell: bash 才会加 `-eo pipefail`。
       - name: 出包（本机架构 = arm64，不交叉）
+        shell: bash
         run: sh tools/mac-package.sh 2>&1 | tee "$RUNNER_TEMP/package.log"
 
       # ⚠ 验证跑在**分发包本身**上，不是开发树：装配漏文件、签名顺序错、
@@ -48,6 +53,7 @@ jobs:
       #   verify-vm.sh 含：L1 单测 / L2 冒烟 / L3 UI ×2（默认缩放 + devicePixelRatio=2）/
       #   签名清点 / 探针静态检查。语音段因包里不含模型而自动降级跳过。
       - name: 对分发包跑全量验证
+        shell: bash
         run: |
           cd dist/桌宠-mac-arm64
           sh tools/verify-vm.sh 2>&1 | tee "$RUNNER_TEMP/verify.log"
@@ -86,9 +92,24 @@ jobs:
             echo "结论：${{ job.status }}"
             echo "运行器：$(uname -m) / $(sw_vers -productVersion 2>/dev/null || echo '?')"
             echo "运行：${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            echo
+            # 失败摘要放在**最前面**：正文有长度上限，只靠 tail 会把先跑的场景截掉，
+            # 实测就是这样丢了那条真正失败的场景名，白跑一轮。
+            echo '===== 失败摘要（从整份日志挑，不受截断影响）====='
             echo '```'
-            tail -c 40000 "$RUNNER_TEMP/package.log" 2>/dev/null
-            echo "----- verify-vm.sh -----"
+            grep -nE "SCENARIO [A-Za-z]+ FAIL|FAIL code=|TIMEOUT|断言失败|退出码=[^0]|❌" \
+              "$RUNNER_TEMP/verify.log" "$RUNNER_TEMP/package.log" 2>/dev/null | head -40 || echo "(无匹配)"
+            echo '```'
+            echo '----- 失败场景的上下文（含 stderr 头几行）-----'
+            echo '```'
+            grep -A 12 "FAIL code=" "$RUNNER_TEMP/verify.log" 2>/dev/null | head -80 || echo "(无)"
+            echo '```'
+            echo '===== package.log 尾部 ====='
+            echo '```'
+            tail -c 20000 "$RUNNER_TEMP/package.log" 2>/dev/null
+            echo '```'
+            echo '===== verify.log 尾部 ====='
+            echo '```'
             tail -c 20000 "$RUNNER_TEMP/verify.log" 2>/dev/null
             echo '```'
           } > "$RUNNER_TEMP/comment.md"
