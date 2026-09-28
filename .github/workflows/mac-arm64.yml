@@ -100,7 +100,12 @@ jobs:
             grep -nE "SCENARIO [A-Za-z]+ FAIL|FAIL code=|TIMEOUT|断言失败|退出码=[^0]|❌" \
               "$RUNNER_TEMP/verify.log" "$RUNNER_TEMP/package.log" 2>/dev/null | head -40 || echo "(无匹配)"
             echo '```'
-            echo '----- 失败场景的上下文（含 stderr 头几行）-----'
+            echo '===== 本次跑出来的测量值（每次都留痕，不只失败时才有）====='
+            echo '```'
+            grep -nE "\[scenario\] .*实测" /tmp/deskpet-verify/raw.log "$RUNNER_TEMP/verify.log" 2>/dev/null \
+              | sed 's#^[^:]*:[0-9]*: *##' | sort -u | head -20 || echo "(无)"
+            echo '```'
+            echo '===== 失败场景的上下文（含 stderr 头几行）-----'
             echo '```'
             grep -A 12 "FAIL code=" "$RUNNER_TEMP/verify.log" 2>/dev/null | head -80 || echo "(无)"
             echo '```'
