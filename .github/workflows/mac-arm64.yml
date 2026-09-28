@@ -19,6 +19,11 @@ jobs:
   package-and-verify:
     runs-on: macos-15
     timeout-minutes: 45
+    # 贴 commit 评论需要 contents 写权限。Actions 的默认令牌**只有读**，
+    # 不加这一段的话 gh api 会 403，而那又被 continue-on-error 盖成 success ——
+    # 实测踩过：job 全绿、评论数 0、日志等于没留。
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
