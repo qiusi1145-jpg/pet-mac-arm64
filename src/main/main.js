@@ -1985,6 +1985,10 @@ class PetApp {
         bubble: (text, ms) => this.send('bubble:chat', { text, ms }),
         // 独立窗口驱动（待办/聊天）
         waitForWin: (name, timeoutMs = 8000) => this.waitForScenarioWin(name, timeoutMs),
+        // 宠物窗显隐（托盘/菜单的等价入口）：给"另一窗口会不会被置顶透明窗冻住"这类
+        // 需要**对照组**的场景用 —— 没有对照组的话，帧率低到底是冻结还是本来就不画，分不清。
+        showPet: () => this.showWindow(),
+        hidePet: () => this.hideWindow(),
         execIn: (name, expr) => {
           const w = this[name];
           if (!w || w.isDestroyed()) throw new Error(`窗口未打开: ${name}`);

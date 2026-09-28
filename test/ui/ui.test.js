@@ -12,7 +12,7 @@ const path = require('path');
 const ROOT = path.join(__dirname, '..', '..');
 const ELECTRON = require('electron');
 
-const ALL_SCENARIOS = ['greeting', 'blink', 'blinkAnim', 'fxAnim', 'stateVisual', 'typing', 'lock', 'todo', 'reminder', 'chat', 'anim', 'dragPhysics', 'physOff', 'status', 'passthrough', 'picker', 'bg', 'menuClean', 'audio', 'rest', 'learn'];
+const ALL_SCENARIOS = ['greeting', 'blink', 'blinkAnim', 'fxAnim', 'stateVisual', 'typing', 'lock', 'todo', 'reminder', 'chat', 'anim', 'dragPhysics', 'physOff', 'status', 'passthrough', 'picker', 'bg', 'menuClean', 'audio', 'rest', 'learn', 'occlusion'];
 // PET_UI_ONLY='bg,audio' 只跑指定场景，便于调试单个新场景
 const ONLY = (process.env.PET_UI_ONLY || '').split(',').map((s) => s.trim()).filter(Boolean);
 const SCENARIOS = ONLY.length ? ONLY : ALL_SCENARIOS;

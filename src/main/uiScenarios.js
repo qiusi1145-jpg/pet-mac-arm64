@@ -1286,6 +1286,63 @@ const scenarios = {
 
     return assertMap(results);
   },
+
+  /**
+   * L1：透明 + 置顶的宠物窗**不许**让其它 Chromium 窗口掉帧或冻结。
+   *
+   * 原来这条只能"有真机的人打开两个窗口用肉眼盯"，结论不可重放、改一次窗口层级就得重看一遍。
+   * 这里把它换成可数的事：在被测窗口里跑一个 requestAnimationFrame 计数循环，分两种状态各采样一段
+   *    ① 宠物窗**隐藏**（对照组）② 宠物窗**显示且在动**（被测状态）
+   * ② 塌到接近 0、或比对照组掉一半以上，就是冻结/严重掉帧。
+   *
+   * ⚠ 两个必须守住的前提，否则测出来的是假数据：
+   *  - **隐藏页会被 Chromium 节流 rAF**，所以采样期间被测窗口必须真的显示着（不能最小化/移出屏幕）。
+   *    因此先拿对照组的帧率当"测量本身可信"的门槛：对照组本来就不画的话，② 怎么低都不算结论。
+   *  - 宠物窗有常驻渲染循环（呼吸/弹簧），"在动"是它本来就有的状态，不需要额外驱动。
+   */
+  async occlusion(ctx) {
+    const { js, sleep, execIn, waitForWin, mainState } = ctx;
+    await waitFor(js, 'window.__petReady && window.__petState().petLoaded', 12000, 'renderer ready + pet');
+    const results = [];
+    const MS = 1500;
+
+    ctx.openTodo();
+    await waitForWin('todoWin');
+    await sleep(300);
+
+    // 计数器装在待办窗里：它是个普通不透明窗口，正是"被置顶透明窗压在下面"的那一方
+    await execIn('todoWin', `(() => {
+      window.__frames = 0; window.__rafOn = true;
+      (function loop() { if (!window.__rafOn) return; window.__frames++; requestAnimationFrame(loop); })();
+      return true;
+    })()`);
+    const sample = async () => {
+      await execIn('todoWin', 'window.__frames = 0');
+      await sleep(MS);
+      return await execIn('todoWin', 'window.__frames');
+    };
+
+    // ② 先测被测态（宠物窗一启动就是显示着的），再关它测对照组，最后必须开回来，
+    //    否则这条场景会把后面复用的窗口留在隐藏态。
+    const withPet = await sample();
+    ctx.hidePet();
+    await sleep(300);
+    const noPet = await sample();
+    ctx.showPet();
+    await sleep(300);
+    const backAgain = await sample();
+
+    await execIn('todoWin', 'window.__rafOn = false');
+
+    results.push({ name: `对照组真的在画（宠物窗隐藏时 ${noPet} 帧/${MS}ms）—— 不然这测量不可信`, ok: noPet >= 10 });
+    results.push({ name: `宠物窗显示且在动时另一窗口没有冻结（${withPet} 帧）`, ok: withPet > 0 });
+    results.push({ name: `掉帧不超过对照组的一半（${withPet} vs 对照 ${noPet}）`, ok: withPet >= noPet * 0.5 });
+    results.push({ name: `宠物窗重新显示后帧率恢复（${backAgain} 帧）`, ok: backAgain >= noPet * 0.5 });
+    results.push({ name: '收尾时宠物窗已恢复显示', ok: mainState().visible === true });
+
+    await execIn('todoWin', `window.close()`);
+    return assertMap(results);
+  },
 };
 
 module.exports = { scenarios, waitFor };
