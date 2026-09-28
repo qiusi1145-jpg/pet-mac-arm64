@@ -1334,6 +1334,10 @@ const scenarios = {
 
     await execIn('todoWin', 'window.__rafOn = false');
 
+    // 这是一条**测量**，不是布尔判断：测到的帧率必须打出来。否则真机上到底是 90 帧还是 11 帧
+    // 刚好压过阈值，事后完全看不出来，阈值也就没法校准。
+    console.log(`[scenario] occlusion 实测：${MS}ms 内帧数 宠物窗显示=${withPet} 隐藏(对照)=${noPet} 再次显示=${backAgain}`);
+
     results.push({ name: `对照组真的在画（宠物窗隐藏时 ${noPet} 帧/${MS}ms）—— 不然这测量不可信`, ok: noPet >= 10 });
     results.push({ name: `宠物窗显示且在动时另一窗口没有冻结（${withPet} 帧）`, ok: withPet > 0 });
     results.push({ name: `掉帧不超过对照组的一半（${withPet} vs 对照 ${noPet}）`, ok: withPet >= noPet * 0.5 });
