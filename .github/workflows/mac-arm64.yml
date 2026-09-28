@@ -104,18 +104,33 @@ jobs:
             echo '```'
             grep -A 12 "FAIL code=" "$RUNNER_TEMP/verify.log" 2>/dev/null | head -80 || echo "(无)"
             echo '```'
+            # verify-vm.sh 把子进程的完整输出留在 runner 本地的 raw.log 里（报告只回显尾部若干行），
+            # 同一台机器上直接读它，才能拿到被尾部窗口截掉的那段。
+            echo '===== raw.log 里的失败详情 ====='
+            echo '```'
+            grep -nE "SCENARIO [A-Za-z]+ FAIL|FAIL code=|TIMEOUT|断言失败|Error:|error:" \
+              /tmp/deskpet-verify/raw.log 2>/dev/null | head -60 || echo "(没有 raw.log)"
+            echo '```'
+            echo '----- raw.log 失败场景的 stderr 上下文 -----'
+            echo '```'
+            grep -B 2 -A 14 "FAIL code=" /tmp/deskpet-verify/raw.log 2>/dev/null | head -120 || echo "(无)"
+            echo '```'
             echo '===== package.log 尾部 ====='
             echo '```'
-            tail -c 20000 "$RUNNER_TEMP/package.log" 2>/dev/null
+            tail -c 12000 "$RUNNER_TEMP/package.log" 2>/dev/null
             echo '```'
             echo '===== verify.log 尾部 ====='
             echo '```'
-            tail -c 20000 "$RUNNER_TEMP/verify.log" 2>/dev/null
+            tail -c 12000 "$RUNNER_TEMP/verify.log" 2>/dev/null
             echo '```'
           } > "$RUNNER_TEMP/comment.md"
+          # GitHub 评论正文上限 65536 字符，超了 API 返 422 —— 而那会被 continue-on-error 盖掉，
+          # 等于"留痕步骤安静地失败"。所以这里硬截断，保证评论一定发得出去。
           node -e '
             const fs = require("fs");
-            process.stdout.write(JSON.stringify({ body: fs.readFileSync(process.env.RUNNER_TEMP + "/comment.md", "utf8") }));
+            let body = fs.readFileSync(process.env.RUNNER_TEMP + "/comment.md", "utf8");
+            if (body.length > 60000) body = body.slice(0, 30000) + "\n\n…（中间截断）…\n\n" + body.slice(-28000);
+            process.stdout.write(JSON.stringify({ body }));
           ' > "$RUNNER_TEMP/payload.json"
           gh api -X POST "repos/${{ github.repository }}/commits/${{ github.sha }}/comments" \
             --input "$RUNNER_TEMP/payload.json"

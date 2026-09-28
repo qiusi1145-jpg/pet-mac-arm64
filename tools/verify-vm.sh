@@ -21,6 +21,15 @@ run() { # run <标签> <命令...>
   say "===== $L ====="
   "$@" >> "$OUT/raw.log" 2>&1; C=$?
   tail -n "${TAIL:-26}" "$OUT/raw.log" | tee -a "$REPORT"
+  # 失败时**不能**只留一句"退出码=1"：默认只回显尾部 26 行，而失败的那条经常在窗口之外，
+  # 结果就是"红了但不知道挂在哪"，白跑一整轮（CI 上实测踩过）。所以失败时从整份 raw.log
+  # 里把失败行连同它的 stderr 上下文捞出来，让报告自己带诊断。
+  if [ "$C" -ne 0 ]; then
+    say "----- ↑ $L 失败详情（从整份 raw.log 挑，不受尾部窗口限制）-----"
+    grep -nE "SCENARIO [A-Za-z]+ FAIL|TIMEOUT|断言失败" "$OUT/raw.log" | tail -n 20 | tee -a "$REPORT"
+    say "----- ↑ $L 失败场景的 stderr 头几行 -----"
+    grep -n -A 8 "FAIL code=" "$OUT/raw.log" | tail -n 40 | tee -a "$REPORT"
+  fi
   say "--- $L 退出码=$C ---"
   return $C
 }
