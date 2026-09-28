@@ -28,7 +28,10 @@ static unsigned char gAllow[256];
 static long gCodes[16];
 static int gNCodes = 0;
 
-static void beat(void) { fputc('k', stdout); fflush(stdout); }
+// 协议是**行协议**：父进程用 readline 按 '\n' 切行（`src/main/typing.js` 里 `s === 'k'` 才发一拍）。
+// 少了这个换行，56 下按键会攒成没终止的一行，readline 一行都不吐 → 探针活着、事件也收到了，
+// 界面上却完全没有反应（实测踩过，且 tools/typing-live-test.sh 按字符数 k 所以当时报了绿灯）。
+static void beat(void) { fputs("k\n", stdout); fflush(stdout); }
 
 static CGEventRef tapCb(CGEventTapProxy proxy, CGEventType type, CGEventRef event, void *refcon) {
   (void)proxy; (void)refcon;

@@ -173,6 +173,7 @@ test('无实现的平台：available() false 且 start() 失败但不抛（菜�
   try {
     Object.defineProperty(process, 'platform', { value: 'freebsd', configurable: true });
     assert.equal(m.available(), false);
+    assert.equal(m.unavailableReason(), '本平台不支持');
     assert.equal(m.start(), false);
     assert.equal(m.running(), false);
     assert.match(m.status().error, /unsupported-platform/);
@@ -192,6 +193,9 @@ test('darwin：helper 缺席 → available() false，start() 报 helper-missing 
   try {
     Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
     require('fs').existsSync = () => false;
+    // 文案必须区分"平台不支持"和"包没打全"：mac 上探针缺席是打包漏了，
+    // 说成"本平台不支持"会把人引去查平台（实测误判过一次，用户以为功能没移植）。
+    assert.equal(m.unavailableReason(), '探针文件缺失');
     assert.equal(m.available(), false);
     assert.equal(m.start(), false);
     assert.match(m.status().error, /helper-missing/, '错误里必须给出补救路径（build-mac-helper.sh）');
@@ -199,6 +203,12 @@ test('darwin：helper 缺席 → available() false，start() 报 helper-missing 
     require('fs').existsSync = realExists;
     Object.defineProperty(process, 'platform', desc);
   }
+});
+
+// available() 与 unavailableReason() 不许各说各话（菜单置灰用前者、文案用后者）
+test('available() 恒等于「没有不可用原因」', () => {
+  const m = new TypingMonitor(require('os').tmpdir());
+  assert.equal(m.available(), m.unavailableReason() === null);
 });
 
 /* ================= macOS 探针（keybeat.m）的语义与隐私守卫 ================= */
@@ -246,20 +256,36 @@ test('隐私红线：探针只允许写协议位 k/t/n，任何输出键值的�
   const writes = src.match(/\b(fputc|fwrite|fputs|printf|puts|fprintf|fflush)\s*\([^;]*\)/g) || [];
   assert.ok(writes.length >= 1, '一条输出都没有 = 探针根本不上报');
   // 协议只有三个单字符位：k = 有一个文本键被按下；t/n = 探针自检的 TCC 信任状态。
-  // 不变式取"每条写语句的字符字面量都必须属于协议集合、且至少有一个"：
+  // 不变式取"每条写语句的字面量都必须属于协议集合、且至少有一个"：
   // 既放过 `fputc(AXIsProcessTrusted() ? 't' : 'n', stdout)` 这类合法写法，
   // 又会抓住任何把变量/键码/字符内容往 stdout 发的语句（没有合法字面量 → 红）。
-  const ALLOWED = new Set(["'k'", "'t'", "'n'", String.raw`'\n'`]);
+  const ALLOWED = new Set(["'k'", "'t'", "'n'", String.raw`'\n'`,
+    String.raw`"k\n"`, String.raw`"t\n"`, String.raw`"n\n"`]);
   for (const raw of writes) {
     const w = raw.trim();
     if (/^fflush\(stdout\)$/.test(w)) continue;
-    const lits = w.match(/'(?:\\.|[^'\\])'/g) || [];
+    const lits = w.match(/'(?:\\.|[^'\\])'|\"(?:\\.|[^\"\\])*\"/g) || [];
     assert.ok(lits.length > 0, `写语句里没有协议字符字面量，来源可疑：${w}`);
     for (const L of lits) {
       assert.ok(ALLOWED.has(L), `探针试图输出 ${L}（可能泄露键值）：${w}`);
     }
   }
-  assert.ok(writes.some((w) => w.includes("'k'")), '必须有上报 k 的语句');
+  assert.ok(writes.some((w) => /['"]k\\?n?['"]/.test(w)), '必须有上报 k 的语句');
+});
+
+// 父进程是 readline（按行切），所以"上报一拍"必须是**一整行**。
+// 少了换行就是这次事故的形状：探针收到 56 下、输出 56 个 k，应用一拍都收不到，
+// 而按字符数统计的实测脚本照样报绿灯 —— 所以这条不变式必须由单测守，不能靠人眼。
+test('行协议：每个上报位都必须自带换行（readline 按行切，裸字符永远不成行）', () => {
+  const src = fs.readFileSync(path.join(__dirname, '../../src/main/mac/keybeat.m'), 'utf8');
+  const beatFn = src.match(/static void beat\(void\)\s*\{([^}]*)\}/);
+  assert.ok(beatFn, '找不到 beat() —— 探针的上报入口改名了，这条守卫要一起改');
+  const body = beatFn[1];
+  assert.ok(/fputs\("k\\n"/.test(body) || (/fputc\('k'/.test(body) && /\\n/.test(body)),
+    `beat() 必须写一整行 k（当前：${body.trim()}）`);
+  // 自检行同理：t/n 之后必须跟换行，否则连 probeTrusted 都读不到
+  const selfReport = src.match(/fputc\(AXIsProcessTrusted\(\)[^;]*;[\s\S]{0,80}?fputc\('\\n'/);
+  assert.ok(selfReport || /"(t|n)\\n"/.test(src), '自检的 t/n 也必须成行');
 });
 
 test('macProbeArgs：给出 [字符表, 键码CSV]，且字符表覆盖字母数字标点', () => {
