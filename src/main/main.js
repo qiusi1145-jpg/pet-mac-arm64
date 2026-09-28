@@ -32,6 +32,7 @@ const { ACCENTS, normalizeAccentPref } = require('../shared/uiTheme');
 const PS = require('../shared/pomodoroStats');          // 番茄钟学习记录/成就（纯函数）
 const pomoStatsStore = require('./pomodoroStatsStore'); // 同上，持久化（data/pomodoro-stats.json）
 const { WinEnum } = require('./winenum');
+const { IS_MAC, applyStartupSwitches, hideFromDock, guardPetWindow } = require('./platform');
 const { TypingMonitor } = require('./typing');
 const { normalizeVisualMode } = require('../shared/status'); // 视觉形态枚举（与渲染层同一份定义）
 
@@ -105,11 +106,8 @@ if (process.env.PET_DEBUG) {
 // 让“应用内添加音乐 → 自动播放 / 播放列表切歌”无需额外的用户手势即可出声。
 // （Chromium 默认 autoplay 策略会拦掉没有 user gesture 的 Audio.play()，这里放开。）
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
-// 【交互冻结根治】禁用 Chromium 的 Windows 遮挡计算（CalculateNativeWinOcclusion）：
-// 它会把“被完全遮挡的本窗”（透明巨窗常会被这么判）按 hidden 处理 → rAF 停转 →
-// “悬停→取消穿透”的命中判定全停，实测症状为“桌宠点不动 + 浮层关不掉”同时出现。
-// 本应用常驻渲染本就无可省功耗，直接禁掉该特性（渲染层另有 cursor:pos IPC 驱动判定的兜底）。
-app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
+// 【交互冻结根治】禁用 Chromium 的遮挡计算（仅 Windows 有此特性名，见 platform.js）
+applyStartupSwitches(app);
 
 // 语音诊断模式（`npm run voice:diag`）——必须在 ready 之前决定：
 //  · 关掉 GPU：诊断只需要一个隐藏窗采音频，而**无 GPU / 沙箱 / 远程会话**下
@@ -279,6 +277,8 @@ class PetApp {
     }
     app.on('second-instance', () => this.showWindow());
     app.setAppUserModelId('com.deskpet.desktop');
+    // macOS：桌宠不该占一个 Dock 位（Windows 上由 skipTaskbar 负责，mac 没有任务栏）
+    hideFromDock(app);
 
     fs.mkdirSync(this.assetsDir, { recursive: true });
     fs.mkdirSync(this.petRoot, { recursive: true });
@@ -372,17 +372,12 @@ class PetApp {
     // 置顶级别统一最高档（screen-saver）：锁定/解锁差异只在穿透语义（见构造函数注释）
     this.win.setAlwaysOnTop(true, this.lockLevel);
     this.win.setIgnoreMouseEvents(true, { forward: true });
-    // 【遮挡冻结根治】加 WS_EX_TOOLWINDOW（工具窗口位）：Chromium 系应用（Chrome/Edge/QQ 等）
-    // 的"原生窗口遮挡检测"会把工具窗口排除在遮挡物之外。实测（A/B 对照）：不加此位时，
-    // 真实点击激活本窗（覆盖整个工作区）会把被盖住的浏览器标签页判为 hidden → GIF/视频
-    // 冻结（点回那个窗口才恢复）；加此位后同样的点击不产生任何冻结。附带效果：Alt-Tab
-    // 里不再出现桌宠（本就不该出现）。
-    if (process.platform === 'win32') {
-      try {
-        const hwndDec = this.win.getNativeWindowHandle().readBigUInt64LE(0).toString();
-        this.winEnum.applyExStyle(hwndDec, 0x80, 0); // WS_EX_TOOLWINDOW
-      } catch (e) { log('applyExStyle failed', e && e.message); }
-    }
+    // 【遮挡冻结根治】平台专属防护，实现与理由都在 platform.js。
+    // Windows 侧实测（A/B 对照）：不写 WS_EX_TOOLWINDOW 时，真实点击激活本窗（覆盖整个工作区）
+    // 会把被盖住的浏览器标签页判为 hidden → GIF/视频冻结（点回那个窗口才恢复）；写此位后不冻结。
+    // macOS 侧没有"工具窗口位"，靠透明窗本身不构成遮挡物 + 下面两条兜底；**该推断待真机验证**。
+    this.windowGuard = guardPetWindow(this.win, this.winEnum, log);
+    log('window guard', JSON.stringify(this.windowGuard));
     this.win.on('closed', () => { this.win = null; });
     if (!this.consoleListenerAttached) {
       this.consoleListenerAttached = true;
@@ -1565,23 +1560,35 @@ class PetApp {
     const icon = this.makeTrayIcon();
     this.tray = new Tray(icon);
     this.tray.setToolTip(PET_NAME);
-    this.tray.on('double-click', () => this.showWindow());
+    // macOS **不发出** tray 的 `double-click`（Electron 文档明确）→ 改成单击唤出，
+    // 否则"点托盘显示宠物"在 mac 上会变成静默无反应（红线：不做静默无反应）。
+    if (IS_MAC) this.tray.on('click', () => this.showWindow());
+    else this.tray.on('double-click', () => this.showWindow());
     this.rebuildTray();
   }
 
   makeTrayIcon() {
-    // 程序内绘制 16x16 圆点（不依赖外部图片文件）
+    // 程序内绘制圆点（不依赖外部图片文件）。
+    // Windows：16px 彩色蓝圆。macOS：菜单栏图标必须是**模板图** —— 只有 alpha 通道有意义，
+    // 系统按菜单栏深/浅色自动染色（涂成蓝色在深色菜单栏上会变成一团死色）；并按 2x 画，
+    // 否则 Retina 下发虚。
+    const S = IS_MAC ? 36 : 16;
+    const c = S / 2 - 0.5;
+    const rIn = S * 0.44, rOut = S * 0.5;
     const bmp = [];
-    for (let y = 0; y < 16; y++) {
-      for (let x = 0; x < 16; x++) {
-        const dx = x - 7.5, dy = y - 7.5;
-        const d = Math.sqrt(dx * dx + dy * dy);
-        const a = d <= 7 ? 255 : d <= 8 ? 200 : 0;
-        bmp.push(0, 140, 220, a); // BGRA
+    for (let y = 0; y < S; y++) {
+      for (let x = 0; x < S; x++) {
+        const d = Math.hypot(x - c, y - c);
+        const a = d <= rIn ? 255 : d <= rOut ? 200 : 0;
+        if (IS_MAC) bmp.push(0, 0, 0, a); // 模板图：RGB 一律黑
+        else bmp.push(0, 140, 220, a);    // BGRA 蓝
       }
     }
-    const img = nativeImage.createFromBitmap(Buffer.from(bmp), { width: 16, height: 16 });
-    return img.resize({ width: 16, height: 16 });
+    const opts = IS_MAC ? { width: S, height: S, scaleFactor: 2 } : { width: S, height: S };
+    const img = nativeImage.createFromBitmap(Buffer.from(bmp), opts);
+    // 特性探测而非假定：方法缺席（老版本 Electron / 测试桩）只影响图标配色，不该掀掉整个启动流程
+    if (IS_MAC && img && typeof img.setTemplateImage === 'function') img.setTemplateImage(true);
+    return img;
   }
 
   rebuildTray() {

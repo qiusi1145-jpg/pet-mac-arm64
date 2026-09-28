@@ -22,7 +22,7 @@
  * 所以做成"按需下载"而不是随包分发。缺模型时应用不会崩——语音功能整体优雅隐藏
  * （菜单照常出现，点开/说话时提示"语音模型未安装"），与"学英语缺词书"同一套路。
  *
- * 依赖：Windows 自带 bsdtar（C:\Windows\System32\tar.exe，支持 .tar.bz2）与 curl。
+ * 依赖：系统自带 curl 与 bsdtar（Windows 10+ 在 System32，macOS/Linux 在 PATH）。
  * 若解压工具缺失，脚本会保留已下载的压缩包并给出**手动解压的一行命令**。
  */
 const fs = require('fs');
@@ -56,9 +56,9 @@ function human(n) {
   return `${n} B`;
 }
 
-/** 找一个可用的 curl（Windows 10+ 自带 C:\Windows\System32\curl.exe）。 */
+/** 找一个可用的 curl（Windows 10+ 与 macOS 都自带；先试裸命令让 PATH 决定）。 */
 function findCurl() {
-  for (const p of ['C:/Windows/System32/curl.exe', 'curl']) {
+  for (const p of ['curl', 'C:/Windows/System32/curl.exe']) {
     const r = spawnSync(p, ['--version'], { encoding: 'utf8' });
     if (r.status === 0) return p;
   }
@@ -132,7 +132,7 @@ function download(url, dest, depth = 0) {
 }
 
 function findTar() {
-  for (const p of ['C:/Windows/System32/tar.exe', 'tar']) {
+  for (const p of ['tar', 'C:/Windows/System32/tar.exe']) {
     const r = spawnSync(p, ['--version'], { encoding: 'utf8' });
     if (r.status === 0) return p;
   }

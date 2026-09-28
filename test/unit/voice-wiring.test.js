@@ -91,7 +91,7 @@ function loadMainWithStub(userDataDir) {
     },
     Tray: function () { return { setToolTip() {}, on() {}, setContextMenu() {}, destroy() {} }; },
     Menu: { buildFromTemplate: () => ({ items: [], popup: () => {} }), setApplicationMenu: () => {} },
-    nativeImage: { createFromBitmap: () => ({ resize: () => ({}) }) },
+    nativeImage: { createFromBitmap: () => ({ resize: () => ({}), setTemplateImage: () => {} }) },
     globalShortcut: {
       // 记录"注册了哪个全局键 + 回调" —— 让测试能真的"按一下"（不必依赖真实键盘）
       register: (acc, fn) => { fe._shortcuts.push(acc); fe._shortcutHandlers[acc] = fn; return true; },
