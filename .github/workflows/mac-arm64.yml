@@ -1,0 +1,66 @@
+name: mac-arm64 出包与全量回归
+
+# 为什么需要这条流水线：
+#   arm64 包目前只能从 x86_64 虚拟机里**交叉**产出（用户没有任何 Apple Silicon 机器）。
+#   交叉出包能静态证明"结构对、架构对、签名对"，但证明不了"在真 arm64 上跑得起来"——
+#   而 Apple Silicon 是内核级强制签名，漏一个二进制就是开不了机（Killed: 9）。
+#   GitHub 托管的 macos-15 运行器是真 M1 arm64，公共仓库免费。在这里出包还顺带消掉
+#   交叉编译那两类架构漏洞（Electron 按本机架构下载、helper 忘了 -arch）。
+#
+# 注意：私有仓库的 macOS 分钟数**要花钱**（超出套餐额度后 $0.062/分钟），
+#       只有公共仓库才是完全免费。见 README 里的说明。
+
+on:
+  workflow_dispatch:          # 手动跑一次（发版前用这个）
+  push:
+    branches: [master]
+
+jobs:
+  package-and-verify:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      # 架构必须当场核对：GitHub 哪天换默认架构，宁可这里直接红，
+      # 也不要产出一份"名字叫 arm64、里面混着 x86_64"的包 —— 这个坑本地踩过两次。
+      - name: 确认运行器是 arm64 真机
+        run: |
+          uname -a
+          [ "$(uname -m)" = arm64 ] || { echo "❌ 运行器架构不是 arm64，而是 $(uname -m)"; exit 1; }
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # 原生出包：编译打字探针 → 装依赖 → ad-hoc 签名（由内向外）→ 清隔离 → 逐个 Mach-O 校验
+      - name: 出包（本机架构 = arm64，不交叉）
+        run: sh tools/mac-package.sh
+
+      # ⚠ 验证跑在**分发包本身**上，不是开发树：装配漏文件、签名顺序错、
+      #   探针没随包走，这类问题只有在产物上跑才暴露得出来。
+      #   verify-vm.sh 含：L1 单测 / L2 冒烟 / L3 UI ×2（默认缩放 + devicePixelRatio=2）/
+      #   签名清点 / 探针静态检查。语音段因包里刻意不含模型而自动降级跳过。
+      - name: 对分发包跑全量验证
+        run: |
+          cd dist/桌宠-mac-arm64
+          sh tools/verify-vm.sh
+
+      # 只有 ditto 会保留 .command / keybeat 的可执行位与签名（Windows 压缩软件会把执行位弄丢）
+      - name: 打成 zip 并给出 sha256
+        run: |
+          cd dist
+          ditto -c -k --sequesterRsrc --keepParent 桌宠-mac-arm64 桌宠-mac-arm64.zip
+          shasum -a 256 桌宠-mac-arm64.zip | tee 桌宠-mac-arm64.zip.sha256.txt
+          du -h 桌宠-mac-arm64.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          # artifact 名只允许 [a-zA-Z0-9._-]，中文会被 action 直接拒掉 —— 别改成中文。
+          # 下载下来的文件名由 path 里的 zip 决定，不受这里影响。
+          name: pet-mac-arm64
+          path: |
+            dist/桌宠-mac-arm64.zip
+            dist/桌宠-mac-arm64.zip.sha256.txt
+          if-no-files-found: error
+          retention-days: 90
