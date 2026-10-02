@@ -106,7 +106,7 @@ test('全部素材同画布、有可交互像素、脚底与中轴逐张对齐',
     assert.ok(an.hasPixels, `${a.label} 没有可交互像素（会被判成全透明）`);
     const feet = an.bbox.y1;
     const cx = (an.bbox.x0 + an.bbox.x1) / 2;
-    // 实测脚底 1355~1357、中轴 1088~1089；容差给到 4/3px（2048 画布缩到 386 显示 < 0.8px）
+    // 实测脚底 1355~1357、中轴 1088~1089；容差给到 4/3px（2048 画布缩到显示尺寸后 <0.8px）
     assert.ok(Math.abs(feet - ref.height) <= ref.height, `${a.label} 脚底基线异常`);
     const refAn = analyzeBitmap(ref, TH());
     assert.ok(Math.abs(feet - refAn.bbox.y1) <= 4,

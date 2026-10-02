@@ -28,9 +28,8 @@ const { analyzeBitmap } = require('../src/shared/geom');
 const { CFG } = require('../src/shared/config');
 
 const ROOT = path.join(__dirname, '..');
-const SIZE = 320;      // 占位图画布边长。⚠ 小于显示上限 CFG.image.petMaxDim(386) → 占位图按"小图不放大"
-                       // 原样显示（人物偏小），且 assets.test.js 里"主图大于显示上限"那条对占位图不成立；
-                       // 正式手绘是 2048，两者别混用。骨架坐标全部按 320 写死，要改大小得整体缩放。
+const SIZE = 320;      // 占位图画布边长（显示上限 CFG.image.petMaxDim 现为 270，320 略大 → 会被缩到 270）。
+                       // 改这个数要连骨架坐标一起缩放（全按 320 写死）；正式手绘是 2048，两者别混用。
 const SS = 4;          // 超采样倍数（细线条靠它抗锯齿）
 const CX = 160;        // 中轴
 const INK = [52, 58, 68];
