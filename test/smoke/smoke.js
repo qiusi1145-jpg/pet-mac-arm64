@@ -9,7 +9,9 @@ const os = require('os');
 const path = require('path');
 
 const ROOT = path.join(__dirname, '..', '..');
-const ELECTRON = require('electron'); // 在纯 Node 下 require('electron') 返回 exe 路径
+// PET_ELECTRON_BIN：把测试指向**交付物本身**（打包出来的 桌宠.exe / Electron.app 里的二进制），
+// 而不是开发树 node_modules 里那个 —— 出包脚本用它验包，验的才是真发出去的东西。
+const ELECTRON = process.env.PET_ELECTRON_BIN || require('electron');
 
 async function main() {
   const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'deskpet-smoke-'));

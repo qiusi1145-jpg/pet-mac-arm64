@@ -10,7 +10,8 @@ const os = require('os');
 const path = require('path');
 
 const ROOT = path.join(__dirname, '..', '..');
-const ELECTRON = require('electron');
+// PET_ELECTRON_BIN 同 smoke.js：出包脚本用它把 L1 打到**交付物本身**上（验包不是验开发树）。
+const ELECTRON = process.env.PET_ELECTRON_BIN || require('electron');
 
 // 场景清单（2026-10-02 单形态改版）：blink / blinkAnim / fxAnim / stateVisual 四个场景
 // 已合并成一个 autoAnim —— 眨眼与随机特效合成"三种自动动画"，形态切换整体删除。
