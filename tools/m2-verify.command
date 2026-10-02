@@ -26,12 +26,14 @@ say "  内存      : $(( $(sysctl -n hw.memsize) / 1073741824 )) GB"
 
 # 免登录的 artifact 直链（GitHub 签发的临时签名地址，约 10 分钟后自动失效；
 # 只授予读这一个压缩包，过期即死。云机登不上 GitHub 时靠它把包拉下来。）
-PKG_URL="https://productionresultssa11.blob.core.windows.net/actions-results/231fd485-52c5-812c-a26d-4cf7c113d074/workflow-job-run-eae421b2-06fc-57d0-ae64-52b81585a4aa/artifacts/390d2e489d2c11bdf725f5544110a10cb1bf8e6a5d1cff7f1247c0225cd7d1c3.zip?rscd=attachment%3B+filename%3D%22pet-mac-arm64.zip%22&rsct=application%2Fzip&se=2026-10-02T15%3A57%3A06Z&sig=d%2F1tlYTv5lwWLhVWjbb%2FVD3BMEg2eXoGJLf4Lj8ELuw%3D&ske=2026-10-02T18%3A09%3A05Z&skoid=ca7593d4-ee42-46cd-af88-8b886a2f84eb&sks=b&skt=2026-10-02T14%3A09%3A05Z&sktid=398a6654-997b-47e9-b12b-9515b896b4de&skv=2025-11-05&sp=r&spr=https&sr=b&st=2026-10-02T15%3A47%3A01Z&sv=2025-11-05"
+PKG_URL="https://productionresultssa11.blob.core.windows.net/actions-results/231fd485-52c5-812c-a26d-4cf7c113d074/workflow-job-run-eae421b2-06fc-57d0-ae64-52b81585a4aa/artifacts/390d2e489d2c11bdf725f5544110a10cb1bf8e6a5d1cff7f1247c0225cd7d1c3.zip?rscd=attachment%3B+filename%3D%22pet-mac-arm64.zip%22&rsct=application%2Fzip&se=2026-10-02T16%3A32%3A48Z&sig=CaabK3eO5v84IGsy7znbwZ76e2dLyy8bD9NXIdjnfJ8%3D&ske=2026-10-02T18%3A08%3A48Z&skoid=ca7593d4-ee42-46cd-af88-8b886a2f84eb&sks=b&skt=2026-10-02T14%3A08%3A48Z&sktid=398a6654-997b-47e9-b12b-9515b896b4de&skv=2025-11-05&sp=r&spr=https&sr=b&st=2026-10-02T16%3A22%3A43Z&sv=2025-11-05"
 
 Z=""
 # 只认"里面真的是应用包"的那个 zip：artifact 外层压缩包解开后才是 桌宠-mac-arm64.zip，
 # 两者名字都含 mac-arm64，按名字顺序挑会挑错（挑错的表现是解压后没有包目录）。
-for f in "$D/桌宠-mac-arm64.zip" "$D"/*/桌宠-mac-arm64.zip "$HOME/Desktop/桌宠-mac-arm64.zip"          "$HOME/Desktop"/*/桌宠-mac-arm64.zip "$D"/*mac-arm64*.zip; do
+# ToDesk/浏览器会把文件落在各处（下载、桌面、home 根、传输子目录），所以按"里面真的是应用包"来找，
+# 而不是赌路径 —— 传一半的残包过不了这道检查，不会被误当成品。
+for f in "$D/桌宠-mac-arm64.zip" "$D"/*/桌宠-mac-arm64.zip "$HOME/Desktop/桌宠-mac-arm64.zip"          "$HOME/Desktop"/*/桌宠-mac-arm64.zip "$HOME/桌宠-mac-arm64.zip"          $(find "$HOME" -maxdepth 3 -name '桌宠-mac-arm64*.zip' 2>/dev/null | head -8); do
   [ -f "$f" ] || continue
   unzip -l "$f" 2>/dev/null | grep -q '桌宠-mac-arm64/' || continue
   Z="$f"; break
