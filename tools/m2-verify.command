@@ -25,15 +25,17 @@ say "  CPU      : $(sysctl -n machdep.cpu.brand_string 2>/dev/null)"
 say "  内存      : $(( $(sysctl -n hw.memsize) / 1073741824 )) GB"
 
 Z=""
-for f in "$D/桌宠-mac-arm64.zip" "$D"/*mac-arm64*.zip "$HOME/Desktop"/*mac-arm64*.zip; do
+# 只认"里面真的是应用包"的那个 zip：artifact 外层压缩包解开后才是 桌宠-mac-arm64.zip，
+# 两者名字都含 mac-arm64，按名字顺序挑会挑错（挑错的表现是解压后没有包目录）。
+for f in "$D/桌宠-mac-arm64.zip" "$D"/*/桌宠-mac-arm64.zip "$HOME/Desktop/桌宠-mac-arm64.zip"          "$HOME/Desktop"/*/桌宠-mac-arm64.zip "$D"/*mac-arm64*.zip; do
   [ -f "$f" ] || continue
-  case "$f" in *artifact*) continue ;; esac
+  unzip -l "$f" 2>/dev/null | grep -q '桌宠-mac-arm64/' || continue
   Z="$f"; break
 done
 if [ -z "$Z" ]; then
   say "❌ 「下载」里没找到 桌宠-mac-arm64.zip。"
-  say "   请先在浏览器里登录 GitHub，打开 Actions run 页面下载 artifact pet-mac-arm64，"
-  say "   再**双击**那个 artifact 压缩包，让它把 桌宠-mac-arm64.zip 解到旁边，然后重跑本脚本。"
+  say "   请先在浏览器里登录 GitHub，打开 Actions run 页面点 Artifacts 里的 pet-mac-arm64 下载，"
+  say "   再**双击**它解出一个文件夹，把里面的 桌宠-mac-arm64.zip 拖到「下载」根目录，然后重跑本脚本。"
   say "报告已写入 $RPT"; exit 1
 fi
 say "[1] 包与校验和"
