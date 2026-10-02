@@ -1,5 +1,5 @@
 #!/bin/sh
-# 打字探针的真人按键验证（形态三在 macOS 上的端到端证据）。
+# 打字探针的真人按键验证（打字状态在 macOS 上的端到端证据）。
 #
 # 这个脚本**必须走生产链路**（src/main/typing.js 的 TypingMonitor），不许自己 spawn 探针
 # 再裸数 stdout —— 上一版就是这么写的：探针少写了一个换行，父进程的 readline 一行都切不出来，

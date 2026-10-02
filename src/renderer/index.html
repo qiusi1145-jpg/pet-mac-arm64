@@ -26,9 +26,10 @@
     #petWrap { position: absolute; left: 0; top: 0; z-index: 2; pointer-events: none;
       will-change: transform; }
     #petWrap > #pet { display: block; }
-    /* 叠加帧层（眨眼 / 随机特效动画：整帧“接管”本体显示）：
-       尺寸/位置/缩放原点全部由渲染层逐帧设置；显示中隐藏本体（帧 = 完整整图，防双影）。 */
-    #blink { position: absolute; left: 0; top: 0; width: 0; height: 0; display: none;
+    /* 叠加帧层（自动动画整帧“接管”本体显示；打字两帧也走这条路径）：
+       尺寸/位置/缩放原点全部由渲染层逐帧设置；显示中隐藏本体（帧 = 完整整图，防双影）。
+       原名 #blink —— 它早已不是眨眼专用，改名以免和 #fx（爱心层）一起被误读。 */
+    #overlay { position: absolute; left: 0; top: 0; width: 0; height: 0; display: none;
       pointer-events: none; }
     /* 特效/爱心层 */
     #fx { position: absolute; inset: 0; z-index: 3; pointer-events: none; overflow: visible; }
@@ -136,7 +137,7 @@
 <body>
   <div id="world">
     <img id="bg" alt="" draggable="false" />
-    <div id="petWrap"><img id="pet" alt="" draggable="false" /><img id="blink" alt="" draggable="false" /></div>
+    <div id="petWrap"><img id="pet" alt="" draggable="false" /><img id="overlay" alt="" draggable="false" /></div>
     <div id="fx"></div>
     <div id="ui">
       <div id="pill" class="interactive" title="点击折叠/展开状态"><span class="dot">●</span><span class="txt"></span></div>

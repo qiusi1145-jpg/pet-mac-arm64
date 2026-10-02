@@ -61,14 +61,15 @@ function guardPetWindow(win, winEnum, log) {
 }
 
 /**
- * macOS「辅助功能」权限查询 —— 形态三（打字状态）的前置条件。
+ * macOS「辅助功能」权限查询 —— 打字状态（键盘探针）的前置条件。
  *
  * 为什么不能只判断"探针在不在"：未授权时 `addGlobalMonitorForEvents` **照样注册成功**，
  * 但事件永远不来，而且系统不报错。所以必须显式查信任状态，否则就是"选了没反应"的死局。
  *
  * @param {object} systemPreferences Electron 的 systemPreferences（由调用方注入，便于单测）
- * @param {boolean} prompt 是否顺带弹系统授权框 —— 只在用户**主动**选形态三时传 true，
- *   启动/刷新菜单时传 false（不要没事就弹框骚扰用户）。
+ * @param {boolean} prompt 是否顺带弹系统授权框 —— 只在"该引导用户去授权"的时机传 true：
+ *   启动时一次（main.js 的 did-finish-load）+ 用户主动打开托盘「打字状态检测」时；
+ *   托盘菜单刷新/轮询一律传 false（不然每次展开菜单都在骚扰用户）。
  * @returns {{known:boolean, trusted:boolean}} known=false 表示本平台/本版本无此概念，不拦。
  */
 function accessibilityTrusted(systemPreferences, prompt = false) {

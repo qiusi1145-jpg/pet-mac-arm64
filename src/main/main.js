@@ -34,7 +34,6 @@ const pomoStatsStore = require('./pomodoroStatsStore'); // 同上，持久化（
 const { WinEnum } = require('./winenum');
 const { IS_MAC, applyStartupSwitches, hideFromDock, guardPetWindow, accessibilityTrusted } = require('./platform');
 const { TypingMonitor } = require('./typing');
-const { normalizeVisualMode } = require('../shared/status'); // 视觉形态枚举（与渲染层同一份定义）
 
 const PET_NAME = '桌宠';
 
@@ -148,7 +147,8 @@ class PetApp {
     this.pomoStats = pomoStatsStore.load(this.userDataRoot); // 番茄钟学习记录（启动读一次，之后内存+落盘）
     this.winEnum = new WinEnum(this.userDataRoot);
     this.assetsDir = path.join(this.userDataRoot, 'assets');
-    // 素材根目录（需求："换图即定制"）：宠物主图（约定文件 pet.png）、眨眼帧、状态图都放这里。
+    // 素材根目录（需求："换图即定制"）：只放**宠物主图**（约定文件 pet.png）。
+    //    打字两帧与自动动画三种不在这里 —— 它们与内置美术同源于 src/assets/（见 config.typing/autoAnim）。
     // 应用内不提供浏览/修改该目录的入口；开发者用文件管理器维护。
     this.petRoot = path.join(this.assetsDir, 'pet');
     this.region = null;           // 屏幕坐标区域
@@ -177,8 +177,10 @@ class PetApp {
     this.voiceWin = null;         // 语音采集/识别进程宿主窗（隐藏；见 voiceService.js）
     this._englishBooks = {};      // 学英语词书内存缓存（level → book）
     this.englishRemindTimer = 0;  // 桌宠催背定时器
-    this.visualMode = 'main';     // 当前视觉形态：main=主宠物图 / state=状态图 / type=打字状态（渲染层回传同步）
-    // 打字监听（形态三）：只在 visualMode==='type' 且宠物可见时存在，切走即 kill（详见 src/main/typing.js）
+    // 打字检测总开关（托盘可关）：关掉 = kill 探针，系统里不留任何全局键盘钩子。
+    this.typingEnabled = true;
+    // 打字监听：改版后不再由"选了哪个形态"决定，而是**宠物可见期间常驻**（详见 src/main/typing.js）。
+    // ⚠ 这是用户 2026-10-02 明确同意的隐私口径变更；开关关掉 / 隐藏宠物 / 退出 都会 kill 探针。
     this.typing = new TypingMonitor(this.userDataRoot);
     this.typing.on('beat', () => this.send('typing:beat'));
     // 聊天编排器：文字（chatSend）与语音（voiceFinal）的唯一汇流点，内部走 ChatEngine 注册表
@@ -237,6 +239,8 @@ class PetApp {
     this.store.load();
     this.locked = !!this.store.get().locked;
     this.visible = this.store.get().visible !== false;
+    // 打字检测开关（托盘可关；关掉即 kill 探针，系统里不留全局键盘钩子）
+    this.typingEnabled = this.store.get().typingEnabled !== false;
     log('store loaded');
 
     // LLM 密钥文件（**明文独立文件，刻意放在便携目录之外**）——密钥**不进 settings.json**。
@@ -306,6 +310,8 @@ class PetApp {
     //   回归测试见 test/unit/voice-wiring.test.js（它把主进程 boot 一遍再断言接线）。
     this.startVoice();
     log('ipc/tray/cursor/voice up');
+    // 打字探针的启动与授权引导都在 did-finish-load 里（见 createWindow），不在这里 ——
+    // 节拍要有接收方，且单元测试 boot 主进程时不该去编译探针、装全局键盘钩子。
 
     if (process.env.PET_SMOKE) {
       this.runSmoke();
@@ -362,7 +368,19 @@ class PetApp {
     // 屏幕显示时再 show，避免白闪
     this.pageLoaded = false;
     this.win.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'), { query: TEST_MODE ? { test: '1' } : {} });
-    this.win.webContents.on('did-finish-load', () => { log('page did-finish-load'); this.pageLoaded = true; });
+    this.win.webContents.on('did-finish-load', () => {
+      log('page did-finish-load');
+      this.pageLoaded = true;
+      // 打字探针在**渲染层加载完之后**才启动，不在 init() 里起：
+      //  ① 节拍要有接收方，否则启动瞬间的按键会被丢掉（表现是"打了但没换图"）；
+      //  ② 更要紧的是 —— voice-wiring.test.js 会把主进程完整 boot 一遍，
+      //     在 init() 里启动等于让单元测试去编译 C# 探针 + 装全局键盘钩子（实测卡住过）。
+      // ③ 授权引导也放在这里：它靠气泡说话，页面没加载完气泡是发不出去的
+      //    （"提示了但用户没看见"等同于静默失败）。
+      this.syncTypingMonitor();
+      if (!TEST_MODE && this.typingEnabled) this.guideTypingAuth(true);
+      log('typing monitor', JSON.stringify(this.typing.status()));
+    });
     this.win.once('ready-to-show', () => {
       if (!this.quitNow) {
         this.win.show(); this.win.setAlwaysOnTop(true, 'screen-saver');
@@ -622,12 +640,8 @@ class PetApp {
 
     // 区域调整（渲染层菜单触发）
     ipcMain.handle('region:resize', (_e, width, height) => this.resizeRegion(width, height));
-
-    // 视觉形态（渲染层应用后回传，供"切换状态"菜单单选项勾选态 + 决定打字监听的启停）
-    ipcMain.on('state:visualSync', (_e, { mode }) => {
-      this.visualMode = normalizeVisualMode(mode);
-      this.syncTypingMonitor();
-    });
+    // 「state:visualSync」已删除：只有一种形态，渲染层不再回报形态，探针启停改由
+    // 可见性 + 托盘开关决定（见 syncTypingMonitor）。
   }
 
   /** 相对路径 → 绝对路径：settings 里的相对路径以数据目录为基准；绝对路径原样返回。 */
@@ -1608,6 +1622,19 @@ class PetApp {
           if (self.win && !self.win.isDestroyed()) self.win.webContents.send('physics:enabled', { enabled: v });
         },
       },
+      {
+        // 打字状态检测：探针常驻的唯一出口。关掉立刻 kill 探针，系统里不留任何键盘钩子。
+        // 不可用 / 未授权时不静默 —— 把原因直接写进标签，点开还会去引导授权。
+        label: self.typingToggleLabel(), type: 'checkbox', checked: self.typingEnabled,
+        click: (item) => {
+          const v = !!item.checked;
+          this.typingEnabled = v;
+          this.store.update({ typingEnabled: v }).saveSoon();
+          if (v) self.guideTypingAuth(false);
+          this.syncTypingMonitor();
+          this.rebuildTray();
+        },
+      },
       { type: 'separator' },
       {
         label: '主菜单…',
@@ -1633,14 +1660,45 @@ class PetApp {
   act(type, payload) { this.showIfHidden(); this.send('pet:action', payload ? { type, ...payload } : { type }); }
 
   /**
-   * 形态三在跑才需要打字监听：切走形态 / 隐藏宠物 / 退出 → 立刻停探针，
-   * 系统里不留任何全局键盘钩子（探针只在 start..stop 之间存在）。
-   * TEST_MODE 不装真钩子：低级钩子读到的是全系统的按键，测试期间会把用户真人在打的字
-   * 也算成节拍，帧断言就没法确定；UI 场景改用 __petTest.typingBeat() 注入（同一条渲染路径）。
+   * 打字探针的启停。**改版后（2026-10-02）**：不再由"用户选了哪个形态"决定，而是
+   * 宠物可见期间**常驻** —— 因为显示哪张图现在是自动切的，主进程必须一直知道"有没有在打字"。
+   * 三条一律 kill 的路径：托盘开关关掉 / 隐藏宠物 / 退出 —— 系统里不留任何全局键盘钩子。
+   * TEST_MODE 不装真钩子：钩子读到的是全系统按键，测试期间会把用户真人在打的字也算成节拍，
+   * 帧断言就没法确定；UI 场景改用 __petTest.typingBeat() 注入（同一条渲染路径）。
    */
   syncTypingMonitor() {
-    if (this.visualMode === 'type' && this.visible && !TEST_MODE) this.typing.start();
-    else this.typing.stop();
+    if (!this.typingEnabled || !this.visible || TEST_MODE) { this.typing.stop(); return; }
+    // 本平台/本包根本没有探针（win 缺 csc、mac 缺预编译 helper）时不去 start：
+    // 反复 start 只会反复写错误日志，而"能不能用"这件事托盘项已经如实标出来了。
+    if (!this.typing.available()) return;
+    this.typing.start();
+  }
+
+  /** 托盘「打字状态检测」的文案：把"为什么开不了"写进标签，不接受静默不可用。 */
+  typingToggleLabel() {
+    const why = this.typing.unavailableReason();
+    if (why) return `打字状态检测（${why}）`;
+    const ax = accessibilityTrusted(systemPreferences, false);
+    if (ax.known && !ax.trusted) return '打字状态检测（需授权辅助功能）';
+    return '打字状态检测';
+  }
+
+  /**
+   * macOS 辅助功能授权引导。探针改成常驻后，"用户点菜单项"这个天然引导入口没了，
+   * 所以换到两处：启动时一次（prompt=true，直接把用户送到系统设置页）、
+   * 以及托盘开关被打开时（只提示不抢着弹设置页）。
+   * 未授权期间功能自然降级（只有主图 + 自动动画），但原因必须让用户看得见 ——
+   * "选了却没反应"是本项目明令禁止的表现。
+   */
+  guideTypingAuth(prompt = true) {
+    if (!IS_MAC || !this.typing.available()) return; // 本平台/本包用不了探针，谈授权没意义
+    const ax = accessibilityTrusted(systemPreferences, false);
+    if (ax.known && ax.trusted) return;
+    if (prompt) accessibilityTrusted(systemPreferences, true);
+    this.send('bubble:chat', {
+      text: '开启打字状态需要在「系统设置 → 隐私与安全性 → 辅助功能」里勾选桌宠，然后重开一次应用。',
+      ms: 7000,
+    });
   }
 
   /* --------- 主菜单文本/可见性（config.js 可定制；item 加 visible:false 即隐藏该项） --------- */
@@ -1684,7 +1742,8 @@ class PetApp {
    * 组装主菜单模板（**不弹窗**，纯结构）。
    * 拆出来有两个好处：① 菜单结构可被自动化断言（native 菜单本身没法查）② 便于排查"某项没出现"。
    * 菜单结构（2026-09-14 起）：休息 / 喂食 / 待办… / 聊天▸(聊天·聊天设置·语音聊天设置…) /
-   * 学习▸(学英语·番茄钟·学习计划表) / 音乐▸ / 背景▸ / 切换状态▸ / 重置状态 / 退出。
+   * 学习▸(学英语·番茄钟·学习计划表) / 音乐▸ / 背景▸ / 重置状态 / 退出。
+   * （原来那个「切换状态▸」三选一子菜单已随 2026-10-02 单形态改版整体删除。）
    */
   buildMainMenuTemplate() {
     const self = this;
@@ -1723,38 +1782,8 @@ class PetApp {
       self.menuItem('bgOp75', { type: 'radio', checked: bgOpacityPct === 75, click: () => self.send('bg:opacity', { opacity: 0.75 }) }),
       self.menuItem('bgOp100', { type: 'radio', checked: bgOpacityPct === 100, click: () => self.send('bg:opacity', { opacity: 1 }) }),
     ].filter(Boolean);
-    // 形态三能不能用，分两层判：**探针在不在**（win 看 csc、mac 看预编译 helper）
-    // 和**权限有没有**（macOS 未授予「辅助功能」时事件不来且不报错）。
-    // 只判第一层就会出现"选了却没反应"的死局 —— 那是本项目明令禁止的表现。
-    const typingWhy = self.typing.unavailableReason();      // null = 探针可用
-    const typingProbe = !typingWhy;
-    const ax = accessibilityTrusted(systemPreferences, false);
-    const typingOn = typingProbe && ax.trusted;
-    const typingNote = typingWhy ? `（${typingWhy}）` : (ax.trusted ? '' : '（需授权辅助功能）');
-    const stateSub = [
-      // 三个单选项直达目标形态（勾选态 = 渲染层回传的当前形态）
-      self.menuItem('stateMain', { type: 'radio', checked: self.visualMode === 'main', click: () => self.send('state:visual', { mode: 'main' }) }),
-      self.menuItem('stateAlt', { type: 'radio', checked: self.visualMode === 'state', click: () => self.send('state:visual', { mode: 'state' }) }),
-      // 「打字状态」需要全局按键探针：本平台用不了就置灰（不能让用户"选了却没反应"），
-      // 文案直接说明原因 —— 与语音全局键注册失败时"如实回报"是同一条红线。
-      // 探针在但缺权限时**保持可点**：点它是去弹系统授权框引导，而不是静默切形态。
-      self.menuItem('stateType', {
-        type: 'radio',
-        checked: self.visualMode === 'type',
-        enabled: typingProbe,
-        label: `${self.menuLabel('stateType')}${typingNote}`,
-        click: () => {
-          if (!typingProbe) return;
-          if (!ax.trusted) {
-            accessibilityTrusted(systemPreferences, true);   // 用户主动点，才弹系统授权框
-            self.showIfHidden();
-            self.send('bubble:chat', { text: '请在「系统设置 → 隐私与安全性 → 辅助功能」里勾选桌宠，然后重新选择本项。', ms: 6000 });
-            return;
-          }
-          self.send('state:visual', { mode: 'type' });
-        },
-      }),
-    ].filter(Boolean);
+    // 「切换状态」子菜单已整体删除：只有一种形态，打字时自动切两张打字图，
+    // 用户不再需要选。开关探针的入口移到托盘（见 rebuildTray 的「打字状态检测」）。
 
     return [
       self.menuItem('rest', { click: () => self.act('rest') }),
@@ -1768,7 +1797,6 @@ class PetApp {
       bgSub.length
         ? { id: 'bg', label: `${self.menuLabel('bg')}${bg && bg.path ? '（已设置）' : ''}`, submenu: bgSub }
         : null,
-      stateSub.length ? self.menuItem('state', { submenu: stateSub }) : null,
       self.menuItem('resetStatus', { click: () => self.act('resetStatus') }),
       // 「通用设置…」（2026-09-17：UI 主题色等跨窗口偏好的入口，窗口本身暂只有这一项）
       self.menuItem('generalSettings', { click: () => self.openGeneralSettingsWindow() }),
@@ -1962,8 +1990,8 @@ class PetApp {
           voice: this.store.get().voice,
           voiceAvailable: !!(this.voice && this.voice.status().available),
           visible: this.visible,
-          visualMode: this.visualMode,
-          typing: this.typing.status(), // { platform, available, running, error }
+          typing: this.typing.status(), // { platform, available, running, error, probeTrusted }
+          typingEnabled: this.typingEnabled,
         }),
         // 主菜单结构（不弹窗）：{ id: [子项 id…] } 只含子菜单；便于断言"学习"一级菜单已就位
         mainMenu: () => this.buildMainMenuTemplate()
@@ -2035,14 +2063,15 @@ class PetApp {
             return { ready: !!window.__petReady, errors: window.__petErrors || 0,
                      petLoaded: !!(s && s.petLoaded), pet: s && s.pet ? { w: s.pet.w, h: s.pet.h } : null,
                      // 内置素材装载（config 默认路径 → 渲染层相对路径直读）：
-                     fxGroups: s ? s.fxAnim.groups : -1, blinkBody: !!(window.__pet && window.__pet.blinkBody) };
+                     // 自动动画的组与打字两帧都必须装得上，否则"自动切换"就是个空壳。
+                     animGroups: s ? s.autoAnim.groups : -1, typeFrames: s ? s.typingReady.frames : -1 };
           })()`);
           const errCount = this.consoleErrors.length + (res.errors || 0);
-          console.log(`[smoke] rendererReady=${res.ready} petLoaded=${res.petLoaded} pet=${JSON.stringify(res.pet)} fxGroups=${res.fxGroups} blinkBody=${res.blinkBody} consoleErrors=${errCount} region=${JSON.stringify(this.region)}`);
-          // fxGroups/blinkBody：config 默认素材（含“动画素材/”中文相对路径）必须能装载，
-          // 否则等于“配置写了但不生效”（手册 #7）。
+          console.log(`[smoke] rendererReady=${res.ready} petLoaded=${res.petLoaded} pet=${JSON.stringify(res.pet)} animGroups=${res.animGroups} typeFrames=${res.typeFrames} consoleErrors=${errCount} region=${JSON.stringify(this.region)}`);
+          // animGroups/typeFrames：config 默认素材必须能装载，否则等于"配置写了但不生效"（手册 #7）。
+          // 打字两帧是硬数（少一帧就没有交替可言）；动画组只要求 > 0（用户可自定义组数）。
           const ok = res.ready && errCount === 0 && (process.env.PET_PET_PATH ? res.petLoaded : true) &&
-            res.fxGroups > 0 && res.blinkBody;
+            res.animGroups > 0 && res.typeFrames === 2;
           console.log(ok ? 'SMOKE_OK' : 'SMOKE_FAIL');
           app.exit(ok ? 0 : 1);
         } catch (e) {

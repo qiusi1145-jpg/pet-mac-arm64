@@ -12,7 +12,9 @@ const path = require('path');
 const ROOT = path.join(__dirname, '..', '..');
 const ELECTRON = require('electron');
 
-const ALL_SCENARIOS = ['greeting', 'blink', 'blinkAnim', 'fxAnim', 'stateVisual', 'typing', 'lock', 'todo', 'reminder', 'chat', 'anim', 'dragPhysics', 'physOff', 'status', 'passthrough', 'picker', 'bg', 'menuClean', 'audio', 'rest', 'learn', 'occlusion'];
+// 场景清单（2026-10-02 单形态改版）：blink / blinkAnim / fxAnim / stateVisual 四个场景
+// 已合并成一个 autoAnim —— 眨眼与随机特效合成"三种自动动画"，形态切换整体删除。
+const ALL_SCENARIOS = ['greeting', 'anim', 'autoAnim', 'typing', 'lock', 'todo', 'reminder', 'chat', 'dragPhysics', 'physOff', 'status', 'passthrough', 'picker', 'bg', 'menuClean', 'audio', 'rest', 'learn', 'occlusion'];
 // PET_UI_ONLY='bg,audio' 只跑指定场景，便于调试单个新场景
 const ONLY = (process.env.PET_UI_ONLY || '').split(',').map((s) => s.trim()).filter(Boolean);
 const SCENARIOS = ONLY.length ? ONLY : ALL_SCENARIOS;

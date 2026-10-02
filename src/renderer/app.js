@@ -17,12 +17,11 @@ const { CFG } = require('../shared/config');
 const { clamp } = require('../shared/util');
 const { analyzeBitmap, hitTestPixel, scalePlan } = require('../shared/geom');
 const {
-  GestureTracker, springParams, integrateSpring, impulse,
+  GestureTracker, springParams, integrateSpring, impulse, settleSpring,
   step: physicsStep, atRest: physicsAtRest, normCol,
 } = require('../shared/motion');
-const { normalizeBlinkFrames, shouldPlayBlinkAnim } = require('../shared/blink');
+const { normalizeAutoAnim, nextDelayMs, shouldAnimate, pickGroupIndex } = require('../shared/autoAnim');
 const statusM = require('../shared/status');
-const { normalizeVisualMode, nextVisualMode, VISUAL_MODES } = statusM;
 const {
   TYPING_IDLE, typingCfg, createTypingMachine, onTypingBeat, onTypingIdleCheck,
 } = require('../shared/typing');
@@ -32,7 +31,8 @@ const worldEl = $('world'), petWrap = $('petWrap'), petEl = $('pet');
 const fxEl = $('fx'), ringWrap = $('ringWrap'), ringArc = $('ringArc');
 const pillEl = $('pill');
 const bubbleEl = $('bubble');
-const blinkEl = $('blink');
+// 整帧替换用的叠加层（原名 #blink —— 它早就不是"眨眼专用"了，自动动画三种都走这里）
+const overlayEl = $('overlay');
 const bgEl = $('bg'), regionPanel = $('panel'), panelDims = $('panelDims');
 const hintEl = $('hint');
 const petPickerEl = $('petPicker');
@@ -104,29 +104,27 @@ const app = {
   // 应用内选择器（选背景/选音乐，绕开这台机器上失灵的原生文件对话框）
   petPickerOpen: false,
   bubbleTimer: null,
-  blink: { visible: false, endTimer: null, playing: false, timer: 0 }, // timer = 下一次眨眼心跳
-  blinkBody: null, // 降级单图眨眼的“帧身体”（src/assets/blink.png 解码；null = 不可用）
-  stateVisual: { mode: 'main' },  // 当前形态：main=主形象，state=状态形象，type=打字状态（三张图）
-  mainBody: null,      // 主形象"身体"：解码位图/锚点/尺寸（当前 app.pet 指向活动身体）
-  stateBody: null,     // 状态形象"身体"（预载 src/assets/state.png 或 config 覆盖；null = 切换不可用）
-  // ---- 打字状态（形态三：config.typing 的三张图 + 探针节拍） ----
-  typeBodies: [],      // 打字两帧身体（[0]=图1、[1]=图2，每按一下键盘交替一次）；不足 2 = 该形态不可用
-  typeIdleBody: null,  // "不打字"图（图3）身体：进入形态三的默认显示，也是停手 idleMs 后的显示
+  // ---- 显示：只有一种形态，靠"是否在打字"自动切换，用户不再手动选 ----
+  mainBody: null,      // 主形象身体（app.pet 恒指向"当前正在显示的那一具"）
+  // ---- 自动动画（原「眨眼」+「随机特效」两套调度合并；config.autoAnim） ----
+  autoAnim: {
+    // cfg.groups 是**唯一**的组来源：启动时把里面的 path 就地换成解码好的帧身体，
+    // 于是"掷概率/随机选组"的纯函数与"实际播什么"永远看同一份数据，不会出现下标错位。
+    cfg: normalizeAutoAnim(), // {minIntervalMs,maxIntervalMs,chance,frameMs,groups}
+    timer: 0,          // 下一次"到点"的定时器
+    playing: false,    // 正在播整帧序列
+    frameTimer: null,  // 当前帧的换帧定时器
+    visible: false,    // 叠加层显示中（= 本体被隐藏中）
+    enabled: false,    // 心跳总闸：测试模式默认关，否则断言时机不可控
+    rng: null,         // 随机源（测试可注入）；null = Math.random
+  },
+  // ---- 打字（config.typing 两帧 + 探针节拍；判定逻辑在 shared/typing.js，一字未改） ----
+  typeBodies: [],      // 打字两帧身体（[0]=图1、[1]=图2）；不足 2 = 打字切换不可用
   typing: {            // 帧机状态见 shared/typing.js（纯函数，单测锁死行为线）
     machine: createTypingMachine(),
-    timer: 0,          // 停手判定定时器（到点跑 onTypingIdleCheck）
+    timer: 0,          // 停手判定定时器（到点跑 onTypingIdleCheck → 回主图）
     cfg: typingCfg(),  // { idleMs, minFlipMs }
   },
-  // ---- 随机特效动画（config.js effectAnim.groups：动画1/动画2 等，整帧替换的随机小动画） ----
-  effectFx: {
-    groups: [],     // [{ name, frames: [帧身体+durationMs] }]；frames 空 = 功能关闭
-    timer: null,    // 15~25s 随机“再试”定时器
-    playing: false,
-    rng: null,      // 组选择随机源（测试可注入）；null = Math.random
-  },
-  // ---- 可定制值（config.js 驱动，initCustomConfig 启动时载入） ----
-  blinkAnim: { frames: [], probability: 1 },  // 多帧眨眼动画（帧身体数组）；frames 空 = 降级旧 blink.png
-  stateImagePath: null,                       // 状态图覆盖路径（相对 data/ 或绝对）；null = 内置
   petPickerKind: 'bg',    // 'bg' | 'audio'（换宠已移除）
   petPickerDir: null,
   petPickerCur: null,     // 当前选中的源文件路径
@@ -192,7 +190,7 @@ function syncHitTest() {
 /* ================= 宠物加载 ================= */
 
 /** 把已加载的 Image 解码成一具"身体"：等比缩放 → 位图分析（透明判定 + 实体像素中心锚点 +
- *  像素级碰撞盒）。主形象/状态形象/眨眼帧/特效帧都走这条管线；body.bitmap 是该形态
+ *  像素级碰撞盒）。主图 / 打字两帧 / 自动动画各帧都走这条管线；body.bitmap 是该身体
  *  像素级判定的唯一来源，body.src（原图）交给 <img> 由浏览器按显示尺寸高质量光栅化。 */
 function decodeImageObject(img, maxDim) {
   const { width, height } = scalePlan(img.naturalWidth, img.naturalHeight, maxDim);
@@ -256,9 +254,9 @@ async function loadPet(dataUrl) {
   petEl.style.transform = '';
   hintEl.style.display = 'none';
   app.anim.spr = { x: { s: 1, v: 0 }, y: { s: 1, v: 0 } };
-  // 载入主形象 = 回到主形态（换宠后抛掷状态复位；打字帧机一并复位）
-  app.stateVisual.mode = 'main';
+  // 载入主形象 = 回到主图（换宠后抛掷状态复位；打字帧机与正在播的动画一并复位）
   stopTyping();
+  abortOverlayPlayback();
   app.phys = null;
   app.dragging = false;
   syncPlacement();
@@ -266,7 +264,7 @@ async function loadPet(dataUrl) {
 }
 
 /** 把"身体"显示到本体 <img> 上：显示尺寸 = 身体尺寸，缩放原点 = 该身体的锚点。
- *  原图直通（body.src），浏览器按显示尺寸高质量光栅化 —— 与特效帧同一条管线，无发糊。 */
+ *  原图直通（body.src），浏览器按显示尺寸高质量光栅化 —— 与叠加帧同一条管线，无发糊。 */
 function drawBody(body) {
   petEl.src = body.src;
   petEl.style.width = body.w + 'px';
@@ -277,42 +275,46 @@ function drawBody(body) {
 }
 
 /**
- * 预载状态形象（第二具身体）：内置 src/assets/state.png 或配置覆盖路径。
- * 失败 → 状态切换不可用（保持主形态）；只在控制台 warn（不进错误计数）。
- */
-async function loadStateBody() {
-  try {
-    app.stateBody = await decodeImageAnyPath(app.stateImagePath || '../assets/state.png');
-  } catch (e) {
-    app.stateBody = null;
-    if (app.stateVisual.mode === 'state') setVisualMode('main'); // 正显示它却加载失败 → 退回主形态
-    console.warn('[pet] 状态形象加载失败（切换状态将不可用）', e && e.message ? e.message : e);
-  }
-}
-
-/**
- * 预载打字状态的三具身体（config.typing：两张打字帧 + 一张"不打字"图）。
- * 半组残缺比没有更难看（连打时会闪缺一帧），所以任一帧失败就整组作废；
- * 作废后 visualAvailable('type')=false → 菜单选了也回主形态，并在控制台说明原因。
+ * 预载打字两帧（config.typing.frames）。半组残缺比没有更难看（连打时会闪缺一帧），
+ * 所以任一帧失败就整组作废 → typingAvailable()=false → 打字时保持主图并在控制台说明原因。
+ * 停手后回**主图**（原来的第三张"不打字"图已随形态系统一起删除）。
  */
 async function loadTypingBodies() {
   const paths = (CFG.typing && CFG.typing.frames) || [];
   const bodies = [];
   for (const p of paths) {
     try { bodies.push(await decodeImageAnyPath(p)); } catch (e) {
-      console.warn('[pet] 打字帧加载失败（打字状态不可用）', p, e && e.message ? e.message : e);
+      console.warn('[pet] 打字帧加载失败（打字时不会切换素材）', p, e && e.message ? e.message : e);
       bodies.length = 0;
       break;
     }
   }
   app.typeBodies = bodies.slice(0, 2);
-  try {
-    app.typeIdleBody = await decodeImageAnyPath(CFG.typing.idleFrame);
-  } catch (e) {
-    app.typeIdleBody = null;
-    console.warn('[pet] "不打字"图加载失败（打字状态不可用）', e && e.message ? e.message : e);
+}
+
+/**
+ * 预载自动动画的各组帧（config.autoAnim.groups：三种动画 = 三组，帧数 1 / 1 / 2）。
+ * 与打字帧同一条红线：一组里任一帧失败就整组作废（播到一半缺帧比不播更难看）；
+ * 全部组都作废则 autoAnim.groups 为空 → 调度器不再起播（功能自然关闭，不会报错刷屏）。
+ */
+async function loadAnimGroups() {
+  const cfg = app.autoAnim.cfg;
+  const out = [];
+  for (const g of cfg.groups) {
+    const frames = [];
+    let ok = true;
+    for (const p of g.frames) {
+      try { frames.push({ ...(await decodeImageAnyPath(p)), durationMs: cfg.frameMs }); } catch (e) {
+        console.warn('[pet] 动画帧加载失败（该组作废）', g.name, p, e && e.message ? e.message : e);
+        ok = false;
+        break;
+      }
+    }
+    if (ok && frames.length) out.push({ name: g.name, frames });
   }
-  if (app.stateVisual.mode === 'type' && !visualAvailable('type')) setVisualMode('main');
+  // 就地替换：cfg.groups 从"路径组"变成"帧身体组"，形状不变（{name, frames:[...]}），
+  // 所以下游 pickGroupIndex / playOverlayFrames 不需要知道这次替换发生过。
+  app.autoAnim.cfg = { ...cfg, groups: out };
 }
 
 function syncPlacement() {
@@ -328,8 +330,13 @@ function emit(kind, data) { for (const fn of app.bus) { try { fn(kind, data); } 
 /* ================= 动画（q 弹 / 爱心） ================= */
 
 function setScale(sx, sy) {
-  const c = petEl.style;
-  c.transform = sx === 1 && sy === 1 ? '' : `scale(${sx.toFixed(4)}, ${sy.toFixed(4)})`;
+  const c = sx === 1 && sy === 1 ? '' : `scale(${sx.toFixed(4)}, ${sy.toFixed(4)})`;
+  petEl.style.transform = c;
+  // 叠加帧（自动动画接管期间显示的 element）必须吃同一个缩放：本体那时是隐藏的，
+  // 只写 #pet 的话 ① 动画期间摸头/落地这一下 q 弹完全看不见，② 播完交还本体的瞬间
+  // 会突然冒出一个"压扁到一半"的身体 —— 肉眼就是"动画结束时闪一下"。
+  // 两边 origin 用各自的 anchor（内置素材同画布 → 数值相同，所以缩放后仍逐像素重合）。
+  overlayEl.style.transform = c;
 }
 
 /** 注入一次 q 弹（magnitude 压缩冲量大小，如 headpat 用 CFG 值）。 */
@@ -447,21 +454,20 @@ function duckAudio(on) {
   el.volume = on ? Math.min(app.audio.volume, CFG.audio.duckVolume) : app.audio.volume;
 }
 
-function setBlinkVisible(v) {
-  // 眨眼/特效帧属于”主宠物形象”：其它形态（状态图 / 打字状态）下不显示
-  if (v && app.stateVisual.mode !== 'main') v = false;
-  app.blink.visible = !!v;
-  if (blinkEl) blinkEl.style.display = app.blink.visible ? 'block' : 'none';
+function setOverlayVisible(v) {
+  app.autoAnim.visible = !!v;
+  if (overlayEl) overlayEl.style.display = app.autoAnim.visible ? 'block' : 'none';
 }
 
-/* ================= 叠加帧（眨眼 / 随机特效动画：整帧“接管”本体显示） =================
- * 帧素材是“包含完整宠物的整图” → 从第一帧起隐藏本体、播完恢复（防双影）。
+/* ================= 叠加帧（自动动画整帧“接管”本体显示；打字两帧走换身体而非这里） =========
+ * 帧素材是"包含完整宠物的整图" → 接管期间隐藏本体、播完恢复（防双影）。
  * 红线不受影响：判定/物理始终用 app.pet 的真实身体位图，叠加只是显示层。
- * 叠加层自身不做缩放：待机不再有呼吸形变，图层切换两侧都是原始尺度（q 弹进行中由
- * canStartOverlay 挡掉，不会出现"本体被压扁、换上的帧却是圆的"）。 */
+ * 叠加层**吃与本体同一个 q 弹缩放**（setScale 两边一起写）—— 否则动画期间摸头看不见反馈，
+ * 播完交还本体的瞬间还会冒出一个"压扁到一半"的身体。起播仍要求弹簧已收敛
+ * （canStartOverlay 里查），免得在明显形变中途换图。 */
 
-/** 显示一帧：帧与本体按“碰撞盒底边中点”对齐（脚底原地不动）。
- *  注入的测试帧（只有 src/durationMs）回退为铺满本体（兼容旧拉伸显示）。 */
+/** 显示一帧：帧与本体按“不透明像素包围盒的底边中点”对齐（脚底原地不动）。
+ *  注入的测试帧（只有 src/durationMs，没有 col）回退为铺满本体。 */
 function showFrameBody(fb) {
   const p = app.pet;
   if (!p) return;
@@ -469,14 +475,17 @@ function showFrameBody(fb) {
   const fcol = fb.col || { ox: 0, oy: 0, w: fw, h: fh };
   const bx = p.col.ox + p.col.w / 2, by = p.col.oy + p.col.h;
   const fx = fcol.ox + fcol.w / 2, fy = fcol.oy + fcol.h;
-  blinkEl.style.left = `${bx - fx}px`;
-  blinkEl.style.top = `${by - fy}px`;
-  blinkEl.style.width = `${fw}px`;
-  blinkEl.style.height = `${fh}px`;
-  blinkEl.src = fb.src;
+  overlayEl.style.left = `${bx - fx}px`;
+  overlayEl.style.top = `${by - fy}px`;
+  overlayEl.style.width = `${fw}px`;
+  overlayEl.style.height = `${fh}px`;
+  // q 弹的缩放原点跟着走（注入的测试帧没有 anchor → 退回本体的，二者同画布时本来也一样）
+  const fa = fb.anchor || p.anchor;
+  overlayEl.style.transformOrigin = `${fa.x}px ${fa.y}px`;
+  overlayEl.src = fb.src;
 }
 
-function overlayBusy() { return app.blink.playing || app.effectFx.playing; }
+function overlayBusy() { return !!app.autoAnim.playing; }
 
 /** 播放期间暂停透明度变化（休息闪烁/归零半透明都走这里）；播完由 finish 恢复。 */
 function applyPetOpacity() {
@@ -484,79 +493,123 @@ function applyPetOpacity() {
   petWrap.style.opacity = petOpacityNow();
 }
 
-/** 立即停止叠加帧播放，恢复本体显示（拖动/切形态/隐藏/抛掷时调用）。
- *  特效调度器无条件重排：上面刚 clearTimeout 过，不补排就等于一次打断把特效永久掐断。 */
-function abortOverlayPlayback() {
-  if (app.blink.endTimer) { clearTimeout(app.blink.endTimer); app.blink.endTimer = null; }
-  if (app.effectFx.timer) { clearTimeout(app.effectFx.timer); app.effectFx.timer = null; }
+/** 停止叠加帧播放，把显示交还本体（拖动/抛掷/隐藏/要切打字时调用）。
+ *  心跳重排走 armAnimTry()：它自带 `enabled` 闸，所以"测试模式不自动跑动画"这个前提
+ *  不会再被一次拖动悄悄打破（旧实现无条件重排特效调度器，是串扰来源）。
+ *  force=true：立刻交接、不等解码 —— 被打字接管时"下一键必须马上看到"压过"绝不空一帧"。 */
+function abortOverlayPlayback(force) {
+  if (app.autoAnim.frameTimer) { clearTimeout(app.autoAnim.frameTimer); app.autoAnim.frameTimer = null; }
   const wasPlaying = overlayBusy();
-  app.blink.playing = false;
-  app.effectFx.playing = false;
-  setBlinkVisible(false);
-  if (app.pet) petEl.style.display = '';
+  app.autoAnim.playing = false;
+  if (force) restoreBodyNow(); else restoreBodyFromOverlay();
   if (wasPlaying) applyPetOpacity();
-  scheduleEffectTry();
+  armAnimTry();
+}
+
+/** 把显示交还本体：隐藏叠加层与显示本体必须在**同一拍**写进 CSS，中途两样都看不见就是空帧。 */
+function restoreBodyNow() {
+  setOverlayVisible(false);
+  if (app.pet) petEl.style.display = '';
+}
+
+/**
+ * 交还本体的"不空帧"版本：先确认本体这一张图解码到位，再撤叠加层。
+ * 本体在叠加层播放期间是 display:none，位图会被浏览器丢掉（实测重新显示前还要再解码 8~29ms）——
+ * 先撤叠加层就会出现同样的"闪一下"；反过来"先显示本体再撤叠加层"则会双影（透明区漏出本体）。
+ * 所以：等解码（这期间叠加层照常显示，画面完好）→ 同一拍交接；兜底时限到就直接交接。
+ */
+function restoreBodyFromOverlay() {
+  if (!app.pet) { setOverlayVisible(false); return; }
+  decodeReady(() => petEl.decode()).then(restoreBodyNow);
+}
+
+/**
+ * 等一张图解码到位再往下走；失败/超时都照常 resolve（宁可交接慢，也绝不把显示卡在半路）。
+ * 时限用 config.image.decodeWaitMs：真解码一次实测 25~37ms，留的是"异常兜底"的余量。
+ */
+function decodeReady(run) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = () => { if (settled) return; settled = true; clearTimeout(guard); resolve(); };
+    const guard = setTimeout(done, CFG.image.decodeWaitMs);
+    let p;
+    try { p = run(); } catch { done(); return; }
+    if (p && typeof p.then === 'function') p.then(done, done); else done();
+  });
+}
+
+/** 把显示交给当前这一帧（隐藏本体 + 显示叠加层，同样同一拍完成）。 */
+function revealFrame() {
+  petEl.style.display = 'none';   // 帧是完整整图：接管期间隐藏本体（防双影）
+  setOverlayVisible(true);
+}
+
+/**
+ * 交接给某一帧：**先让浏览器把这一帧解码到位**，再换显示。
+ *
+ * 为什么必须等（用户 2026-10-02 反馈的"眨眼时整张图明显闪一下"）：素材是 2048 见方的手绘 PNG，
+ * 冷解码实测 25~37ms，本机 240Hz 下就是 6~8 个渲染帧。原来的顺序是"挂 src → 立刻隐藏本体 →
+ * 显示叠加层"，那几帧里本体已经没了、叠加层还没有位图可画 → 屏幕上**没有人物** = 明显的闪一下
+ * （而且是"有时候"：位图在不在解码缓存里取决于内存压力与多久没显示过，实测冷 37ms / 热 4ms）。
+ * 解码期间本体照常显示，所以既不空也不会双影；起播只晚报到 ≤37ms，肉眼读作"正常起播"。
+ * ⚠ `img.complete` 不能当就绪信号 —— 实测 complete=true 时 decode() 仍要 25~33ms：
+ *   complete 只说明字节到手，不说明位图可画，只有 decode() 本身算数。
+ */
+function handoffToFrame() {
+  return decodeReady(() => overlayEl.decode()).then(() => {
+    // 解码期间可能已被打字/拖动/隐藏接管，或本轮已放弃 —— 一律以那边为准，这里不再改显示
+    if (!overlayBusy() || !app.pet || app.paused || app.dragging || isTypingNow()) return false;
+    revealFrame();
+    return true;
+  });
 }
 
 /** 依次播放叠加帧（每帧显示各自 durationMs，播完恢复本体）。
- *  每帧开始前重新检查：宠物在/主形态/未隐藏/未拖动 —— 异常即终止。 */
+ *  每帧开始前重新检查：宠物在/未隐藏/未拖动/未在打字 —— 异常即终止。 */
 function playOverlayFrames(frames, done) {
   let i = 0;
+  const stop = () => {
+    if (!overlayBusy()) return;   // 已被 abort/打字/拖动接管：显示由那边恢复，这里不能再动
+    finishOverlayPlayback();
+    if (done) done();
+  };
   const step = () => {
-    app.blink.endTimer = null;
-    if (!app.pet || app.stateVisual.mode !== 'main' || app.paused || app.dragging || i >= frames.length) {
-      finishOverlayPlayback();
-      if (done) done();
-      return;
-    }
-    showFrameBody(frames[i]);
-    petEl.style.display = 'none'; // 帧是完整整图：从第一帧起隐藏本体（防双影）
-    setBlinkVisible(true);
-    app.blink.endTimer = setTimeout(step, frames[i].durationMs);
+    app.autoAnim.frameTimer = null;
+    if (!app.pet || app.paused || app.dragging || isTypingNow() || i >= frames.length) { stop(); return; }
+    const fb = frames[i];
     i += 1;
+    showFrameBody(fb);            // 只把这一帧挂到叠加层上 —— 此刻**本体仍在显示**，屏幕不会空
+    handoffToFrame().then((ok) => {
+      if (!ok) { stop(); return; }
+      app.autoAnim.frameTimer = setTimeout(step, fb.durationMs);
+    });
   };
   step();
 }
 
 function finishOverlayPlayback() {
-  if (app.blink.endTimer) { clearTimeout(app.blink.endTimer); app.blink.endTimer = null; }
-  setBlinkVisible(false);
-  if (app.pet) petEl.style.display = '';
+  if (app.autoAnim.frameTimer) { clearTimeout(app.autoAnim.frameTimer); app.autoAnim.frameTimer = null; }
+  restoreBodyFromOverlay();
   applyPetOpacity(); // 播放中暂停的透明度变化，播完恢复
 }
 
-/* ================= 视觉形态（三态：主宠物图 / 状态图 / 打字状态） =================
- * 切换形态 = 换一具身体：每种形态都是完整解码的"身体"（各自位图/锚点/尺寸），app.pet 指向
- * 当前身体 → 像素判定/拖动/抛掷/吸附/背景跟随/气泡爱心定位等全部作用于它。
- * 换身体保持"底边中点"位置连续（原地换装；吸附中切换仍挂原窗口顶沿）。
- * 目标形态的身体没加载成功 → 一律退回主形态并如实回报勾选态（不"选了却没反应"）。 */
-
-/** 形态 → 默认展示的身体（打字形态的默认是第三张图：不打字）。 */
-function visualBody(mode) {
-  if (mode === 'state') return app.stateBody;
-  if (mode === 'type') return app.typeIdleBody;
-  return app.mainBody;
-}
-
-/** 形态可用性：主形态总可用；状态形态要状态图；打字形态要两张打字帧 + 一张不打字图。 */
-function visualAvailable(mode) {
-  if (mode === 'state') return !!app.stateBody;
-  if (mode === 'type') return app.typeBodies.length === 2 && !!app.typeIdleBody;
-  return true;
-}
+/* ================= 身体切换（只有一种形态；打字两帧是唯一的"换身体"场景） =========
+ * app.pet 指向当前显示的身体 → 像素判定/拖动/抛掷/背景跟随/气泡爱心定位全部作用于它。
+ * 连续性基准用"整图底边中点"。前提是所有身体**同画布、同脚底、同中轴** —— 这条契约
+ * 由 test/unit/assets.test.js 逐张常驻守卫（画布尺寸相同 + 脚底差 ≤4px + 中轴差 ≤3px）。
+ * ⚠ 不要改成按不透明包围盒(col)对齐：那样一来本函数与 showFrameBody 两套基准，
+ *   主图与内置打字帧画布不同时（UI 测试就是 96px 夹具配 386px 素材）会测出 126px 的跳位，
+ *   实测踩过。契约在测试里守，比在这里做"更聪明"的对齐更稳。 */
 
 /** 当前活动身体是哪一具（诊断 / 测试快照）。 */
 function bodyKindOf(b) {
   if (!b) return null;
   if (b === app.mainBody) return 'main';
-  if (b === app.stateBody) return 'state';
-  if (b === app.typeIdleBody) return 'typeIdle';
   const i = app.typeBodies.indexOf(b);
   return i >= 0 ? `type${i + 1}` : 'unknown';
 }
 
-/** 把当前身体换成 next：底边中点连续（同尺寸就是纯换图）。
- *  切形态与打字帧交替共用这一条路径。 */
+/** 把当前身体换成 next：整图底边中点连续（同画布就是纯换图，脚底不动）。 */
 function applyBody(next) {
   const old = app.pet;
   if (!next) return false;
@@ -572,50 +625,29 @@ function applyBody(next) {
   return true;
 }
 
-/** 回报主进程当前形态（菜单单选项勾选态依据 + 决定打字探针启停）。 */
-function syncVisualMode() {
-  ipcRenderer.send('state:visualSync', { mode: app.stateVisual.mode });
-}
+/** 打字两帧齐了才可能自动切换；缺帧就一直是主图（不"选了却没反应"）。 */
+function typingAvailable() { return app.typeBodies.length === 2; }
 
-function setVisualMode(mode) {
-  let want = normalizeVisualMode(mode);
-  if (!visualAvailable(want)) want = 'main';
-  if (want === app.stateVisual.mode && app.pet === visualBody(want)) { syncVisualMode(); return; }
-  abortOverlayPlayback(); // 叠加帧属于主形象：切形态前停掉眨眼/特效并恢复本体
-  stopTyping();           // 进/出打字态都要复位帧机与停手定时器
-  if (!applyBody(visualBody(want))) { syncVisualMode(); return; }
-  app.stateVisual.mode = want;
-  petEl.style.transform = ''; // 清掉旧身体的缩放形变（弹簧下一帧按新身体重算）
-  if (want !== 'main') setBlinkVisible(false); // 闭眼图属于主形象：其它形态不眨眼
-  syncVisualMode();
-}
+/** 现在是否处于"正在打字"中（帧机相位不是停手）。 */
+function isTypingNow() { return app.typing.machine.phase !== TYPING_IDLE; }
 
-/** 轮换到下一个可用形态（菜单是直达项，这条给测试钩子/循环用）。 */
-function toggleVisualMode() {
-  let m = app.stateVisual.mode;
-  for (let i = 0; i < VISUAL_MODES.length; i++) {
-    m = nextVisualMode(m);
-    if (visualAvailable(m)) break;
-  }
-  setVisualMode(m);
-  return app.stateVisual.mode;
-}
-
-/* ================= 打字状态（形态三）：每按一下键盘换一帧，停手 idleMs 回第三张图 ==========
+/* ================= 打字显示：每按一下键盘在两张打字图之间交替，停手 idleMs 回主图 ==========
  * 节拍来源：主进程键盘探针 → typing:beat。交替/限幅/停手判定的纯逻辑在 shared/typing.js，
- * 行为线由单测锁死，不依赖真敲键盘。
- * 中文/英文一律同一套判定：只认"有没有文本键被按下"，不检测输入法候选窗（候选窗类名随
- * 输入法与版本而变，且"候选窗跟随光标"模式下根本没有独立窗口可查）。 */
+ * 行为线由单测锁死，不依赖真敲键盘。**这次改版只动"显示哪张图"，判定逻辑一字未改。**
+ * 中文/英文一律同一套判定：只认"有没有文本键被按下"，不检测输入法候选窗。 */
 
 function onTypingBeatReceived() {
-  if (app.stateVisual.mode !== 'type' || !visualAvailable('type')) return;
+  if (!typingAvailable()) return;
+  // 动画正在播 → 立刻中止让位给打字帧（"只要还在打字，就只在这两张之间切换"）
+  // force=true：这一路**不等解码** —— 下一个按键必须马上看到，优先级高于"绝不空一帧"。
+  if (overlayBusy()) abortOverlayPlayback(true);
   const r = onTypingBeat(app.typing.machine, Date.now(), app.typing.cfg);
   app.typing.machine = r.s;
   applyBody(app.typeBodies[r.frame]);
   armTypingIdle(r.idleInMs);
 }
 
-/** 停手倒计时：每一拍都重排（先 clearTimeout 再排，与特效调度器同一条"幂等重排"红线）。 */
+/** 停手倒计时：每一拍都重排（先 clearTimeout 再排，幂等重排红线与动画心跳同一条）。 */
 function armTypingIdle(ms) {
   if (app.typing.timer) clearTimeout(app.typing.timer);
   app.typing.timer = setTimeout(typingIdleCheck, Math.max(16, Math.round(ms)));
@@ -623,86 +655,87 @@ function armTypingIdle(ms) {
 
 function typingIdleCheck() {
   app.typing.timer = 0;
-  if (app.stateVisual.mode !== 'type') return;
   const r = onTypingIdleCheck(app.typing.machine, Date.now());
   app.typing.machine = r.s;
-  if (r.frame === TYPING_IDLE) { applyBody(app.typeIdleBody); return; }
+  if (r.frame === TYPING_IDLE) { applyBody(app.mainBody); return; } // 停手 → 回主图
   armTypingIdle(r.waitMs); // 判定前又来了节拍 → 按剩余时间再排一次
 }
 
 function stopTyping() {
   if (app.typing.timer) { clearTimeout(app.typing.timer); app.typing.timer = 0; }
   app.typing.machine = createTypingMachine();
+  // 停手判定被打断时（隐藏/换宠/退出）不许把人留在抬手帧上
+  if (app.mainBody && app.pet && app.typeBodies.indexOf(app.pet) >= 0) applyBody(app.mainBody);
 }
 
-/** 当前显示第几张打字图（-1 = 第三张"不打字"图）。 */
+/** 当前显示第几张打字图（-1 = 没在打字，显示主图）。 */
 function typingFrameIndex() {
-  if (app.stateVisual.mode !== 'type') return TYPING_IDLE;
-  return app.pet === app.typeIdleBody ? TYPING_IDLE : app.typeBodies.indexOf(app.pet);
+  if (!app.pet) return TYPING_IDLE;
+  const i = app.typeBodies.indexOf(app.pet);
+  return i >= 0 ? i : TYPING_IDLE;
 }
 
-/* ================= 眨眼与随机特效动画（两条独立心跳，互斥：谁在播另一方就跳过） ==========
- * 触发不再依赖呼吸零点：眨眼 3~8s 随机一次、特效 15~25s 随机一次，到点直接播；
- * 被占用（拖动/飞行/手势/睡觉/切形态/隐藏/另一方在播）就顺延，不排队堆积。 */
+/* ================= 自动动画调度（一条心跳；原「眨眼」+「随机特效」两条合并） =========
+ * 每 6~7 秒到点一次 → 先按 chance 掷一次（不中就什么也不做，等下一次）→ 命中后随机挑一组
+ * 整帧序列播完。掷概率/选组/区间计算都在 shared/autoAnim.js 的纯函数里，由单测锁死。
+ * 被占用就跳过本轮、顺延，绝不排队堆积。 */
+
+/** q 弹弹簧是否已收敛回原尺寸。叠加层现在吃的是**同一个** scale（setScale 两边一起写），
+ *  这条闸门保留是为了别在明显形变（>1%）中途换图 —— 那会让新图跟着一起扭，读作跳形
+ *  （摸头/落地后最容易撞上）。 */
+function springSettled() {
+  const s = app.anim.spr;
+  return Math.abs(s.x.s - 1) <= 0.01 && Math.abs(s.y.s - 1) <= 0.01;
+}
 
 function canStartOverlay() {
-  // 休息（睡觉时透明度正弦闪烁）期间不起播：眨眼/特效帧是整幅不透明的"换一具身体"，
+  // 休息（睡觉时透明度正弦闪烁）期间不起播：动画帧是整幅不透明的"换一具身体"，
   // 会把睡颜的半透明顶掉一瞬（视觉上=睡着的人突然闪一下又不透明了）。
-  return !!app.pet && app.stateVisual.mode === 'main' && !app.paused && !overlayBusy() &&
+  return !!app.pet && !app.paused && !overlayBusy() &&
     !(app.rest && app.rest.active) &&
-    !app.dragging && !app.phys && !app.gtr.isInteracting;
+    !app.dragging && !app.phys && !app.gtr.isInteracting &&
+    !isTypingNow() &&          // 打字中不播动画：打字优先占住显示
+    springSettled();
 }
 
-/** 眨眼的下一次心跳。 */
-function scheduleBlink() {
-  if (app.blink.timer) clearTimeout(app.blink.timer);
-  app.blink.timer = 0;
-  const min = CFG.blink.minIntervalMs, max = CFG.blink.maxIntervalMs;
-  const delay = Math.max(0, min) + Math.random() * Math.max(0, max - min);
-  app.blink.timer = setTimeout(() => { app.blink.timer = 0; tryBlink(); }, delay);
+function animRng() { return app.autoAnim.rng || Math.random; }
+
+/** 排下一次"到点"。enabled 闸：测试模式默认不自动跑（否则断言时机不可控），
+ *  且重复调用幂等 —— abortOverlayPlayback 会调它，不能因为一次拖动就把该关着的心跳打开。 */
+function armAnimTry() {
+  if (!app.autoAnim.enabled) return;
+  if (app.autoAnim.timer) clearTimeout(app.autoAnim.timer);
+  app.autoAnim.timer = setTimeout(animTry, nextDelayMs(app.autoAnim.cfg, animRng()));
 }
 
-/** 心跳到点：能播就播一次眨眼，随后无条件排下一次（占用中就等于这次没眨，顺延）。 */
-function tryBlink() {
-  if (canStartOverlay()) {
-    const multi = app.blinkAnim.frames.length > 0;
-    const frames = multi ? app.blinkAnim.frames : (app.blinkBody ? [app.blinkBody] : []);
-    // 多帧动画模式保留 blinkAnim.probability（这次要不要演一遍）；单图降级到点就眨
-    if (frames.length && (!multi || shouldPlayBlinkAnim(app.blinkAnim.probability))) {
-      app.blink.playing = true;
-      playOverlayFrames(frames, () => { app.blink.playing = false; });
-    }
-  }
-  scheduleBlink();
-}
-
-/** 随机特效动画：每次播完/跳过后在 min~max 间隔随机“再试”。 */
-function scheduleEffectTry() {
-  if (app.effectFx.timer) clearTimeout(app.effectFx.timer);
-  app.effectFx.timer = null;
-  if (!app.effectFx.groups.length) return;
-  const min = CFG.effectAnim.minIntervalMs, max = CFG.effectAnim.maxIntervalMs;
-  const delay = Math.max(0, min) + Math.random() * Math.max(0, max - min);
-  app.effectFx.timer = setTimeout(() => { app.effectFx.timer = null; effectTry(); }, delay);
-}
-
-/** 到点“再试”：占用中直接顺延一轮，空闲就立刻起播（本体不做待机缩放，切换不跳）。 */
-function effectTry() {
-  if (!app.effectFx.groups.length) return;
-  if (!canStartOverlay()) { scheduleEffectTry(); return; }
-  startEffectPlayback();
-}
-
-function startEffectPlayback() {
-  const groups = app.effectFx.groups;
-  if (!groups.length || !app.pet) return;
-  const rng = app.effectFx.rng || Math.random;
-  const group = groups[Math.min(groups.length - 1, Math.floor(rng() * groups.length))];
-  app.effectFx.playing = true;
+/** 到点：先掷 chance，再看是不是真有空；任一不满足都只顺延，不计失败。 */
+function animTry() {
+  app.autoAnim.timer = 0;
+  const cfg = app.autoAnim.cfg;
+  if (!shouldAnimate(cfg, animRng()) || !canStartOverlay()) { armAnimTry(); return; }
+  const gi = pickGroupIndex(cfg, animRng());
+  const group = gi >= 0 && cfg.groups[gi] ? cfg.groups[gi] : null;
+  if (!group) { armAnimTry(); return; }
+  app.autoAnim.playing = true;
   playOverlayFrames(group.frames, () => {
-    app.effectFx.playing = false;
-    scheduleEffectTry(); // 播完 → 排下一次随机再试
+    app.autoAnim.playing = false;
+    armAnimTry(); // 播完 → 排下一次到点
   });
+}
+
+/** 手动起播一组（测试钩子与"立刻演示一次"用）：占用中一律拒绝并返回 false。 */
+function playAnimGroup(index) {
+  const groups = app.autoAnim.cfg.groups;
+  if (!groups.length) return false;
+  const gi = Number.isFinite(Number(index))
+    ? Math.min(groups.length - 1, Math.max(0, Math.floor(Number(index)))) : 0;
+  if (!app.pet || overlayBusy() || isTypingNow()) return false;
+  app.autoAnim.playing = true;
+  playOverlayFrames(groups[gi].frames, () => {
+    app.autoAnim.playing = false;
+    armAnimTry();
+  });
+  return true;
 }
 
 function updateRing(dt) {
@@ -727,8 +760,11 @@ function tickAnimations(dt, ms) {
   if (!app.pet) return;
   const A = app.anim;
   const P = springParams();
-  A.spr.x = integrateSpring(A.spr.x, dt, P);
-  A.spr.y = integrateSpring(A.spr.y, dt, P);
+  // settleSpring：偏离只剩千分位时吸附回**精确**的 1 —— 否则每帧还在往 CSS 里写
+  // scale(1, 1.0001) 这种值，浏览器就每帧把整张图重新光栅化一次（肉眼看到的"弹完之后闪+抖"，
+  // 根因与实测数字见 motion.settleSpring 的注释）。
+  A.spr.x = settleSpring(integrateSpring(A.spr.x, dt, P), P);
+  A.spr.y = settleSpring(integrateSpring(A.spr.y, dt, P), P);
   // 待机不做任何缩放（原"呼吸波"已删除）：只有 q 弹（摸头/喂食/落地）会让形状短暂变形
   setScale(A.spr.x.s, A.spr.y.s);
   updateRing(dt);
@@ -911,8 +947,7 @@ function bindIpc() {
   ipcRenderer.on('region:changed', (_e, { regionScreen }) => applyRegion(regionScreen));
   ipcRenderer.on('ui:openRegionEditor', () => openRegionEditor());
   ipcRenderer.on('ui:openPicker', (_e, { kind }) => openPetPicker(kind));
-  ipcRenderer.on('state:visual', (_e, { mode }) => setVisualMode(mode));
-  // 打字状态（形态三）：主进程键盘探针每命中一个文本键推一拍 → 换一帧（逻辑见 shared/typing.js）
+  // 打字：主进程键盘探针每命中一个文本键推一拍 → 在两张打字图之间交替（逻辑见 shared/typing.js）
   ipcRenderer.on('typing:beat', () => onTypingBeatReceived());
   // ---- 气泡类：启动问候之外的待办提醒 / 随机催促 / 聊天回复 ----
   ipcRenderer.on('bubble:todo', (_e, { text, ms }) => showBubble(text, ms));
@@ -1647,13 +1682,19 @@ function testState() {
     derived: v,
     greetings: CFG.greeting.greetings || [],
     bubbleVisible: !!(bubbleEl && bubbleEl.classList.contains('show')),
-    blinkAnim: { frames: app.blinkAnim.frames.length, probability: app.blinkAnim.probability },
-    blinkPlaying: app.blink.playing,
-    fxAnim: { groups: app.effectFx.groups.length, playing: app.effectFx.playing },
-    visualMode: app.stateVisual.mode,
-    stateBodyReady: !!app.stateBody,
-    // 形态三：三张图的到位情况 + 帧机当前状态（frame=-1 表示正显示"不打字"那张）
-    typingReady: { frames: app.typeBodies.length, idle: !!app.typeIdleBody },
+    // 自动动画（原 blinkAnim / blinkPlaying / fxAnim 三个快照字段合并而来）
+    autoAnim: {
+      groups: app.autoAnim.cfg.groups.length,
+      chance: app.autoAnim.cfg.chance,
+      frameMs: app.autoAnim.cfg.frameMs,
+      intervalMs: [app.autoAnim.cfg.minIntervalMs, app.autoAnim.cfg.maxIntervalMs],
+      playing: app.autoAnim.playing,
+      visible: app.autoAnim.visible,
+      armed: !!app.autoAnim.timer,   // 心跳是否已排（测试要能区分"没到点"与"没在排"）
+      enabled: !!app.autoAnim.enabled,
+    },
+    // 打字：两帧到位情况 + 帧机当前状态（frame=-1 表示没在打字，正显示主图）
+    typingReady: { frames: app.typeBodies.length },
     typingFrame: typingFrameIndex(),
     typingMachine: { ...app.typing.machine },
     typingCfg: { ...app.typing.cfg },
@@ -1691,40 +1732,10 @@ async function decodeImageAnyPath(p) {
   return decodeImageDataUrl(img.dataUrl, CFG.image.petMaxDim);
 }
 
-/** 单帧路径 → 解码成"帧身体"（位图/锚点/碰撞盒 + 显示时长）。 */
-async function decodeFramePath(p, durationMs) {
-  return { ...(await decodeImageAnyPath(p)), durationMs };
-}
-
-/** 启动时按 config.js 载入"可定制值"（config.js 是唯一定制入口）：
- *  多帧眨眼帧 / 随机特效帧 → 解码成帧身体数组（单帧失败跳过，整组失败禁用该组）；
- *  状态切换图只存原始路径（loadStateBody 会按路径 asset:readImage）。 */
+/** 启动时按 config.js 载入"可定制值"。
+ *  原来这里解三批（多帧眨眼 / 特效组 / 降级单图眨眼），合并成自动动画之后只剩一批。 */
 async function initCustomConfig() {
-  const frames = [];
-  for (const f of normalizeBlinkFrames(CFG.blinkAnim.frames)) {
-    try { frames.push(await decodeFramePath(f.path, f.durationMs)); } catch { /* 单帧失败跳过 */ }
-  }
-  if (frames.length) {
-    app.blinkAnim.frames = frames;
-    const prob = Number(CFG.blinkAnim.probability);
-    app.blinkAnim.probability = Number.isFinite(prob) ? clamp(prob, 0, 1) : 1;
-  }
-  app.stateImagePath = CFG.stateImage.path || null;
-  // 随机特效动画组
-  for (const g of (CFG.effectAnim.groups || [])) {
-    if (!g || !Array.isArray(g.frames) || !g.frames.length) continue;
-    const fm = Number(g.frameMs) > 0 ? Number(g.frameMs) : CFG.blinkAnim.defaultFrameMs;
-    const bodies = [];
-    for (const p of g.frames) {
-      try { bodies.push(await decodeFramePath(p, fm)); } catch { break; } // 整组放弃（半组会显示残缺）
-    }
-    if (bodies.length === g.frames.length) app.effectFx.groups.push({ name: g.name || 'fx', frames: bodies });
-  }
-  // 降级单图眨眼（未配置多帧时使用；缺失只是不眨，不影响其它功能）。
-  // 必须自带 durationMs（playOverlayFrames 按帧取时长，undefined 会让眨眼瞬间闪没）。
-  try {
-    app.blinkBody = { ...(await decodeImageSrc('../assets/blink.png', CFG.image.petMaxDim)), durationMs: CFG.blink.frameMs };
-  } catch { app.blinkBody = null; }
+  await loadAnimGroups();
 }
 
 async function init() {
@@ -1747,7 +1758,7 @@ async function init() {
   app.physicsEnabled = !(initInfo.settings && initInfo.settings.physicsEnabled === false);
   phase4Init(initInfo.settings, initInfo.workArea);
   updateUiRects();
-  await initCustomConfig(); // 可定制值要在 loadPet/loadStateBody（状态身体路径）之前就位
+  await initCustomConfig(); // 自动动画的帧组要在 loadPet 之前就位（解码失败要能安静降级）
 
   // 宠物主图路径由主进程统一解析（素材根目录 pet.png > settings 旧值 > 内置主图）
   const petPath = initInfo.petPath;
@@ -1758,17 +1769,19 @@ async function init() {
   } else {
     hintEl.style.display = 'block';
   }
-  void loadStateBody(); // 预载状态形象（第二具身体）；失败只是切换状态不可用，不影响主形象
-  void loadTypingBodies(); // 预载形态三（打字两帧 + 不打字图）；失败则该形态自动不可用
+  void loadTypingBodies(); // 预载打字两帧；缺帧则打字时保持主图，不影响其它功能
   refreshPill();
 
   app.ready = true;
   window.__petReady = true;
   window.__pet = app;
-  // 眨眼心跳照常起（UI 场景要能等到一次"没人调用"的自动眨眼）；特效仍只在真实运行时随机触发，
-  // 测试里由 __petTest.playEffect() 手动驱动，免得整帧替换撞上别的场景断言。
-  scheduleBlink();
-  if (!app.testMode) scheduleEffectTry();
+  // 动画心跳只在真实运行时自动起：6~7 秒 + 80% 概率的随机时机放进 UI 断言里不可控。
+  // 测试要验"自动触发"这条路径，用 __petTest.setAutoAnimHeartbeat(true) + 注入随机源，
+  // 而不是靠等 —— 这也是旧实现里"特效不在测试模式自动跑"的同一条选择。
+  if (!app.testMode) {
+    app.autoAnim.enabled = true;
+    armAnimTry();
+  }
   setTimeout(() => {
     const list = CFG.greeting.greetings || [];
     if (list.length) showBubble(list[Math.floor(Math.random() * list.length)], CFG.greeting.durationMs);
@@ -1785,48 +1798,54 @@ async function init() {
       feed() { pulseFeed(); },
       toggleLock() { toggleLock(); },
       heart(level = 1) { const p = app.pet; if (p) spawnHeart(p.pos.x + p.anchor.x, p.pos.y + 10, level); },
-      forceBlink(visible) { setBlinkVisible(!!visible); },
-      // 多帧眨眼动画驱动（测试/调试）：frames=[{src:dataUrl,durationMs}]，probability 0~1
-      setBlinkAnim(frames, probability) {
-        app.blinkAnim.frames = (Array.isArray(frames) ? frames : [])
-          .filter((f) => f && f.src)
-          .map((f) => ({ src: f.src, durationMs: clamp(Number(f.durationMs) || 150, 30, 5000) }));
-        app.blinkAnim.probability = clamp(Number(probability == null ? 1 : probability), 0, 1);
+      // —— 自动动画驱动（测试/调试）——
+      // 注入组帧覆盖现有组：测试用纯色 dataURL（没有位图/col → showFrameBody 走退化分支）
+      setAnimGroups(groups) {
+        const gs = (Array.isArray(groups) ? groups : [])
+          .map((g) => ({
+            name: String((g && g.name) || '动画'),
+            frames: (g && Array.isArray(g.frames) ? g.frames : [])
+              .filter((f) => f && f.src)
+              .map((f) => ({ src: f.src, durationMs: clamp(Number(f.durationMs) || app.autoAnim.cfg.frameMs, 30, 5000) })),
+          }))
+          .filter((g) => g.frames.length);
+        app.autoAnim.cfg = { ...app.autoAnim.cfg, groups: gs };
+        return gs.length;
       },
-      // 眨眼心跳开关：UI 场景先关掉再做精确断言，最后打开等一次真实的自动眨眼
-      setBlinkHeartbeat(on) {
-        if (on) scheduleBlink();
-        else { if (app.blink.timer) clearTimeout(app.blink.timer); app.blink.timer = 0; }
+      // 改调度参数（区间/概率）：UI 场景用它把"6~7 秒一次"压成几百毫秒，
+      // 同时把概率设成 0 或 1，让"到点该不该播"变成可精确断言的事。
+      setAnimCfg(patch) {
+        const p = patch && typeof patch === 'object' ? patch : {};
+        const c = app.autoAnim.cfg;
+        const next = { ...c };
+        if (Number.isFinite(Number(p.minIntervalMs))) next.minIntervalMs = Number(p.minIntervalMs);
+        if (Number.isFinite(Number(p.maxIntervalMs))) next.maxIntervalMs = Number(p.maxIntervalMs);
+        if (Number.isFinite(Number(p.chance))) next.chance = Math.min(1, Math.max(0, Number(p.chance)));
+        if (Number.isFinite(Number(p.frameMs))) next.frameMs = Number(p.frameMs);
+        if (next.maxIntervalMs < next.minIntervalMs) next.maxIntervalMs = next.minIntervalMs;
+        app.autoAnim.cfg = next;
+        return { chance: next.chance, minIntervalMs: next.minIntervalMs, maxIntervalMs: next.maxIntervalMs };
       },
-      // 立即播放一次眨眼（跳过心跳等待；忙/睡觉/状态形态/无帧 → false）
-      playBlinkAnim() {
-        if (!canStartOverlay()) return false;
-        const frames = app.blinkAnim.frames.length ? app.blinkAnim.frames : (app.blinkBody ? [app.blinkBody] : []);
-        if (!frames.length) return false;
-        app.blink.playing = true;
-        playOverlayFrames(frames, () => { app.blink.playing = false; });
-        return true;
+      // 心跳开关（含 enabled 总闸）：先关掉做精确断言，再打开验"自动到点"这条路径
+      setAutoAnimHeartbeat(on) {
+        app.autoAnim.enabled = !!on;
+        if (on) armAnimTry();
+        else if (app.autoAnim.timer) { clearTimeout(app.autoAnim.timer); app.autoAnim.timer = 0; }
+        return !!app.autoAnim.timer;
       },
-      // —— 随机特效动画驱动（测试/调试）：注入帧组 + 立即起播（跳过 15~25s 与零点等待）——
-      setEffectFrames(frames) {
-        app.effectFx.groups = (Array.isArray(frames) && frames.length)
-          ? [{
-              name: 'test',
-              frames: frames
-                .filter((f) => f && f.src)
-                .map((f) => ({ src: f.src, durationMs: clamp(Number(f.durationMs) || 150, 30, 5000) })),
-            }]
-          : [];
+      // 注入随机源，把"掷概率 + 选组 + 区间"变成可复现序列；传空恢复 Math.random
+      setAnimRng(seq) {
+        if (Array.isArray(seq) && seq.length) {
+          let i = 0;
+          app.autoAnim.rng = () => seq[i++ % seq.length];
+        } else app.autoAnim.rng = null;
       },
-      playEffect() {
-        if (!app.effectFx.groups.length || !canStartOverlay()) return false;
-        startEffectPlayback();
-        return true;
-      },
-      toggleStateVisual: () => toggleVisualMode(),
-      setVisualMode: (m) => { setVisualMode(m); return app.stateVisual.mode; },
-      // 形态三驱动入口：注入一次"打字节拍"（等价于主进程探针上报，UI 场景不必真敲键盘，
-      // 也不会读到机器上真人正在打的字）；返回值 = 当前第几张打字图（-1=不打字图）。
+      // 立刻播第 index 组（跳过 6~7 秒与掷概率；忙/正在打字/无组 → false）
+      playAnim(index = 0) { return playAnimGroup(index); },
+      // 走一次完整"到点"判定（含 chance 与占用检查），用来验"该不该播"
+      animTickOnce() { animTry(); return { playing: app.autoAnim.playing, armed: !!app.autoAnim.timer }; },
+      // 打字驱动入口：注入一次"打字节拍"（等价于主进程探针上报，UI 场景不必真敲键盘，
+      // 也不会读到机器上真人正在打的字）；返回值 = 当前第几张打字图（-1=主图，没在打字）。
       typingBeat() { onTypingBeatReceived(); return typingFrameIndex(); },
       // 把停手倒计时改短（UI 场景用它验"停手回第三张图"，不必死等 config 的 1s）
       setTypingIdleMs(ms) {

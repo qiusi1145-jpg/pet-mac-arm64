@@ -128,11 +128,11 @@ if [ -f "$MP" ]; then
   say "签名: $(codesign -dv node_modules/electron/dist/Electron.app 2>&1 | head -1)"
 fi
 
-# ---------- 8. 打字探针（形态三）----------
+# ---------- 8. 打字探针（打字状态）----------
 say ""; say "===== [8] 打字探针 keybeat ====="
 HB=src/main/mac/keybeat
 if [ ! -f "$HB" ]; then
-  say "⚠ 没有 $HB —— 形态三在 mac 上会置灰。构建：sh tools/build-mac-helper.sh"
+  say "⚠ 没有 $HB —— 打字状态在 mac 上会置灰。构建：sh tools/build-mac-helper.sh"
   FAILS="$FAILS 打字探针未构建"
 else
   file -b "$HB" | grep -q Mach-O && say "✓ 探针是 Mach-O：$(file -b "$HB" | cut -c1-46)" || say "❌ $HB 不是可执行 Mach-O"
@@ -159,7 +159,7 @@ JSEOF
   if [ "${LIVE_TYPING:-0}" = "1" ]; then
     say "-- LIVE_TYPING=1：跑真人按键验证（接下来 15 秒请在虚拟机里连续敲 10 下以上键）--"
     sh tools/typing-live-test.sh 18 >> "$OUT/raw.log" 2>&1 \
-      && say "✓ 探针端到端捕获到节拍（形态三在 macOS 上可用）" \
+      && say "✓ 探针端到端捕获到节拍（打字状态在 macOS 上可用）" \
       || { say "❌ 探针收不到节拍，见 $OUT/raw.log"; FAILS="$FAILS 打字探针"; }
   else
     say "— 节拍实测需真人按键，默认跳过；要跑：LIVE_TYPING=1 sh tools/verify-vm.sh"

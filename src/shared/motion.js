@@ -216,6 +216,26 @@ function impulse(st, amount) {
   return { s: st.s, v: st.v + amount };
 }
 
+/**
+ * 收位：偏离与速度都落进 eps 以内时，把弹簧吸附回**精确**的 { s: 1, v: 0 }。
+ *
+ * 自然收敛为什么不够（这是"弹完之后整张图闪烁+震颤"的根因，用户 2026-10-02 反馈）：
+ * 尾巴上 |s-1| 只剩 1e-4 量级，386px 显示宽度上位移不到半个像素，眼睛看不见；
+ * 但渲染层每帧都把 `scale(...)` 写给浏览器，而浏览器把**每一次缩放比变化**都当成一次
+ * 整图重新光栅化 —— 主图源是 2048 见方、按 386 CSS px 显示（下采样比 3.54），缩放比一动
+ * 重采样网格就整体错位。实测 scale(1, 1.0001) 相对 scale(1, 1) 有 23736 个像素改变、
+ * 最大色差 235/255。弹簧在这个量级会反复跨过写出的 4 位小数的取整边界（240Hz 上 0.6 秒内
+ * 翻了 20 次），于是看起来就是整张图在闪、在抖。吸附回精确的 1 之后 setScale 交回空串，
+ * 实测空串与 scale(1, 1) 的像素差为 0 —— 收尾这一下不会另起一次闪。
+ *
+ * 速度上限取 w0·eps：简谐运动里速度 v 之后还能再带出 v/w0 的偏离，超过它就不该吸，
+ * 否则等于把还在明显回弹的身体硬按住。
+ */
+function settleSpring(st, P = springParams(), eps = CFG.anim.squishRestEps) {
+  if (Math.abs(st.s - 1) <= eps && Math.abs(st.v) <= P.w0 * eps) return { s: 1, v: 0 };
+  return st;
+}
+
 /* ================= 物理（抛掷 / 坠落） =================
  * 坐标系：活动区域内部坐标，区域左上角为 (0,0)，宽 world.w、高 world.h。
  * 宠物用其“左上角”表示位置，尺寸 w×h。
@@ -335,6 +355,7 @@ module.exports = {
   springParams,
   integrateSpring,
   impulse,
+  settleSpring,
   step,
   atRest,
   normCol,

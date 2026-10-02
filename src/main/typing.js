@@ -2,7 +2,7 @@
 /**
  * 打字监听（主进程）：告诉渲染层"有一个文本键被按下了"，仅此而已。
  *
- * 平台分派（形态三的可移植性设计：上层只认 start/stop/'beat'，换平台只换这个文件）：
+ * 平台分派（打字状态的可移植性设计：上层只认 start/stop/'beat'，换平台只换这个文件）：
  *  - win32：用 .NET Framework 自带的 csc.exe 把下面一小段 C#（WH_KEYBOARD_LL 低级键盘钩子）
  *    编译成探针 exe 常驻 spawn，钩子里每命中一个文本键就往 stdout 写一行 `k`。
  *    与 winenum.js 同一条"零原生依赖"路子（不引入任何 npm 原生模块）。
@@ -12,15 +12,19 @@
  *    见 macOS移植方案.md §13）。只读按定义只能观察、不能拦截，所以"绝不吞键"这条在 mac 上
  *    是**结构上成立**的，比 Windows 靠写对 CallNextHookEx 更稳。
  *    ⚠ 未授予「辅助功能」时事件不会到达**且不报错**，所以可用性判定必须查权限，
- *      不能等用户选了形态三才发现没反应（主进程负责引导授权，见 main.js 的菜单标签）。
- *  - 其它平台：available() 返回 false —— 菜单项直接置灰，不做静默无反应。
+ *      不能等用户开了开关才发现没反应（主进程负责引导授权，见 main.js 的 guideTypingAuth
+ *      与托盘标签 typingToggleLabel —— 不可用的原因直接写在开关文字上）。
+ *  - 其它平台：available() 返回 false —— 托盘开关上写明原因（缺探针/缺 csc.exe/未授权），
+ *    不做"点了没反应"的静默失败。
  *
  * 三条硬约束（改这里前先读懂）：
  *  1. 隐私：探针只输出 `k`，**键值不跨进程**（判定用的白名单在生成源码时嵌进探针里，
  *     父进程收到的仍然只是"有没有按键"）；不写文件、不进日志。
  *  2. 不吞键：钩子恒 CallNextHookEx 且不返回非零，其它程序照常收到每一个键。
- *  3. 只在选中形态三时存在：start/stop 由主进程按形态与窗口可见性驱动，切走即 kill，
- *     系统里不留任何全局钩子。探针回调必须极快（超过系统 LowLevelHooksTimeout 会被静默摘钩），
+ *  3. 存在期间：宠物可见且托盘开关打开（2026-10-02 单形态改版：显示哪张图改为自动切换，
+ *     所以探针必须常驻，不再"切走形态即 kill" —— 这是用户明确同意的隐私口径变更）。
+ *     三条一律 kill 的路径：开关关掉 / 隐藏宠物 / 退出。系统里不会留着钩子没人负责。
+ *     探针回调必须极快（超过系统 LowLevelHooksTimeout 会被静默摘钩），
  *     所以回调里只有一次 HashSet 查表 + 一次 Write。
  */
 const fs = require('fs');
@@ -39,6 +43,23 @@ const WH_KEYBOARD_LL = 13;
 /** macOS 预编译探针的位置（由 tools/build-mac-helper.sh 产出，随包分发）。 */
 function macHelperPath() {
   return path.join(__dirname, 'mac', 'keybeat');
+}
+
+/**
+ * 启动前清掉上一轮可能留下的**孤儿探针**。
+ * 为什么必须有：探针改成常驻之后（2026-10-02），应用被强杀 / 崩溃时 `stop()` 根本来不及跑，
+ * 那个装着全局键盘钩子的子进程会留在系统里 —— 实测一台机器上堆到 120 个。
+ * 单实例锁保证同时只有一个本应用，所以"按名字全杀"不会误伤另一个正常实例。
+ * 清不掉不算错误（最多再留一个孤儿），所以一律吞异常，绝不让探针启动因此失败。
+ */
+function sweepOrphans(exeName) {
+  try {
+    if (process.platform === 'win32') {
+      if (exeName) spawnSync('taskkill', ['/F', '/IM', exeName], { windowsHide: true, timeout: 4000 });
+    } else if (process.platform === 'darwin') {
+      spawnSync('pkill', ['-f', 'mac/keybeat'], { timeout: 4000 });
+    }
+  } catch { /* 忽略：清扫是尽力而为 */ }
 }
 
 /** 文本键白名单在生成期嵌进探针：Node 侧 shared/typing.js 是唯一事实来源（可单测）。 */
@@ -164,6 +185,7 @@ class TypingMonitor extends EventEmitter {
     let cmd, args, extra = {};
     if (process.platform === 'win32') {
       cmd = this.ensureExe();
+      sweepOrphans(path.basename(cmd));   // 先清孤儿，再 spawn 自己这一个
       args = [];
       extra = { windowsHide: true };
     } else if (process.platform === 'darwin') {
@@ -172,6 +194,7 @@ class TypingMonitor extends EventEmitter {
         this.error = 'helper-missing（先跑 sh tools/build-mac-helper.sh）';
         return false;
       }
+      sweepOrphans();
       args = macProbeArgs();   // 白名单注入，键值仍不出探针进程
     } else {
       this.error = `unsupported-platform(${process.platform})`;
@@ -194,7 +217,7 @@ class TypingMonitor extends EventEmitter {
         this._teardown();
         if (unexpected) {
           this.error = `probe-exited(${code})`;
-          console.error('[typing] 打字探针意外退出，形态三停在"不打字"素材：', this.error);
+          console.error('[typing] 打字探针意外退出，打字时保持主图：', this.error);
         }
       });
       // 协议：探针首行报自检的 TCC 信任状态（t/n），之后每命中一个文本键写一行 k；
@@ -211,7 +234,7 @@ class TypingMonitor extends EventEmitter {
       return true;
     } catch (e) {
       this.error = e.message;
-      console.error('[typing] 打字监听启动失败（形态三将停在"不打字"素材）：', e.message);
+      console.error('[typing] 打字监听启动失败（打字时不会换图，一直显示主图）：', e.message);
       return false;
     }
   }

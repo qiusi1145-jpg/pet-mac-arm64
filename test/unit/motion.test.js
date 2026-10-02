@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 
 const {
   GestureTracker, simulate,
-  springParams, integrateSpring, impulse,
+  springParams, integrateSpring, impulse, settleSpring,
   step, atRest,
 } = require('../../src/shared/motion');
 const { CFG } = require('../../src/shared/config');
@@ -192,6 +192,56 @@ test('弹簧：挤压后会过冲（Q弹拉长）且幅度受控、不发散', (
   assert.ok(maxS > 1.015 && maxS < 1.2, `过冲可见但受控: max=${maxS}`);
   assert.ok(Math.abs(st.s - 1) < 1e-3, '最终回到 1');
 });
+
+/* ---------- 收位（q 弹尾巴不再改写 CSS 缩放） ----------
+ * 现象是用户 2026-10-02 反馈的"弹完之后整张图闪烁和震颤"。根因不在动画，而在**看不见的
+ * 千分位缩放仍被逐帧写给浏览器**：主图 2048 见方按 386 CSS px 显示（下采样比 3.54），
+ * 缩放比每变一次整张图就重新光栅化一次（实测 scale(1,1.0001) vs scale(1,1) 差 23736 个像素、
+ * 最大色差 235/255），而弹簧尾巴会反复跨过 4 位小数的取整边界 → 画面闪+抖。 */
+
+test('settleSpring：偏离与速度都进 eps → 吸附到精确的 {1,0}', () => {
+  const P = springParams();
+  const E = CFG.anim.squishRestEps;
+  assert.deepEqual(settleSpring({ s: 1 + E / 2, v: 0 }, P), { s: 1, v: 0 });
+  assert.deepEqual(settleSpring({ s: 1 - E / 2, v: P.w0 * E / 2 }, P), { s: 1, v: 0 });
+  // 还在明显形变 / 还有速度余量 → 一个字都不改（不能把回弹中的身体硬按住）
+  const big = { s: 1 + E * 2, v: 0 };
+  assert.equal(settleSpring(big, P), big);
+  const fast = { s: 1, v: P.w0 * E * 2 };
+  assert.equal(settleSpring(fast, P), fast);
+});
+
+test('settleSpring：配置阈值可见性 —— eps 换算成屏幕位移必须小于 1 CSS px', () => {
+  const E = CFG.anim.squishRestEps;
+  assert.ok(Number.isFinite(E) && E > 0 && E <= 0.005, `squishRestEps=${E}`);
+  assert.ok(E * CFG.image.petMaxDim < 1, `${E} × 显示宽 ${CFG.image.petMaxDim} = ${(E * CFG.image.petMaxDim).toFixed(3)}px，吸附那一下必须看不出来`);
+});
+
+for (const hz of [30, 60, 240]) {
+  test(`摸头之后：CSS 缩放串必须**停止改写**并回到空串（${hz}Hz）`, () => {
+    const P = springParams();
+    const dt = 1 / hz;
+    let x = impulse({ s: 1, v: 0 }, CFG.anim.headpatImpulse * 0.35);
+    let y = impulse({ s: 1, v: 0 }, -CFG.anim.headpatImpulse);
+    // 与渲染层 setScale 逐字同构：4 位小数、恒等时交回空串
+    const write = (sx, sy) => (sx === 1 && sy === 1 ? '' : `scale(${sx.toFixed(4)}, ${sy.toFixed(4)})`);
+    let lastNonEmpty = -1, t = 0, sawDeform = 0;
+    for (let i = 0; i < 8 * hz; i++) {
+      x = settleSpring(integrateSpring(x, dt, P), P);
+      y = settleSpring(integrateSpring(y, dt, P), P);
+      t += dt;
+      const css = write(x.s, y.s);
+      if (css !== '') lastNonEmpty = t;
+      if (Math.abs(y.s - 1) > 0.02) sawDeform++;
+    }
+    assert.ok(sawDeform >= hz * 0.1, '形变本身被吞了：q 弹看不见就没意义了');
+    assert.ok(lastNonEmpty >= 0, '至少弹起来过');
+    // 0.7s 这条线是有对照的（同一套积分实测）：没收位时 30Hz=3.53s、60Hz=2.97s、240Hz 8 秒内
+    // 从未停过；收位后分别是 0.50 / 0.43 / 0.36s。取 0.7 给 30Hz 的帧粒度留一格余量。
+    assert.ok(lastNonEmpty < 0.7,
+      `${hz}Hz 下缩放串到 ${lastNonEmpty.toFixed(2)}s 还在被改写（尾巴没收位 → 整张图持续重绘=闪+抖）`);
+  });
+}
 
 /* ================= 手势 ================= */
 

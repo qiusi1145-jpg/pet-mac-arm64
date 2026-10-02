@@ -38,9 +38,9 @@ echo "产出:   $OUT"
 # ---------- 0. 先构建打字探针 ----------
 # 必须在装配**之前**：build-mac-helper.sh 把产物放在源树的 src/main/mac/keybeat，
 # 装配靠整目录拷贝带上它 —— 先拷后编的话分发包里根本没有探针（实测踩过，
-# 用户机上形态三会静默置灰）。也必须在签名之前，否则签名扫不到它。
+# 用户机上打字状态会静默置灰）。也必须在签名之前，否则签名扫不到它。
 echo ""; echo "===== [0] 构建打字探针 keybeat（目标架构 ${ARCH}）====="
-sh tools/build-mac-helper.sh --force "$ARCH" || die "打字探针编译失败（形态三在 mac 上会置灰）"
+sh tools/build-mac-helper.sh --force "$ARCH" || die "打字探针编译失败（打字状态在 mac 上会置灰）"
 [ -f src/main/mac/keybeat ] || die "编译后源树里仍没有 src/main/mac/keybeat"
 # 交叉出包时最容易踩的坑：helper 悄悄按本机架构编了。产物架构必须显式核对。
 file -b src/main/mac/keybeat | grep -q "$ARCH" \
@@ -52,8 +52,8 @@ ok "探针已就位（源树，${ARCH}）"
 # out、.git、测试报告、语音模型（161MB，缺模型时应用按设计优雅隐藏语音）。
 echo ""; echo "===== [1] 装配文件树 ====="
 rm -rf "$OUT"; mkdir -p "$OUT"
-for item in src test tools README.md package.json package-lock.json \
-            启动桌宠.command 启动桌宠-调试.command 动画素材 UI风格统一指南.md macOS移植方案.md; do
+for item in src test tools package.json package-lock.json README.md 版本日志.md \
+            启动桌宠.command 启动桌宠-调试.command UI风格统一指南.md macOS移植方案.md; do
   [ -e "$ROOT/$item" ] || { warn "跳过不存在的 $item"; continue; }
   cp -R "$ROOT/$item" "$OUT/$item"
 done
@@ -89,7 +89,7 @@ echo ""; echo "===== [1.5] 探针是否随包就位 ====="
 if [ -f "$OUT/src/main/mac/keybeat" ]; then
   ok "分发包内含打字探针：src/main/mac/keybeat"
 else
-  die "分发包里没有 src/main/mac/keybeat —— 形态三在用户机上会静默置灰"
+  die "分发包里没有 src/main/mac/keybeat —— 打字状态在用户机上会静默置灰"
 fi
 
 # ---------- 3. ad-hoc 签名 ----------

@@ -30,6 +30,9 @@ function defaultSettings() {
     pillCollapsed: false,
     // 是否允许物理模拟（甩动抛掷 / 松手坠落）；关闭后人物拖到哪停在哪。
     physicsEnabled: true,
+    // 是否开启"打字状态检测"（托盘开关）。开着 = 宠物可见期间常驻全局键盘探针；
+    // 关掉立刻 kill 探针，系统里不留任何键盘钩子。默认开（用户 2026-10-02 定）。
+    typingEnabled: true,
     // 待办清单
     todos: [], // [{id,text,due,done,important}]
     // 聊天回复规则
@@ -83,6 +86,8 @@ function normalizeSettings(raw) {
   out.status = raw.status && typeof raw.status === 'object' ? { ...raw.status } : null;
   out.pillCollapsed = !!raw.pillCollapsed;
   out.physicsEnabled = raw.physicsEnabled !== false;
+  // 老 settings.json 里没这个键 → 按默认开（"打字时自动换图"是这次改版的主行为）
+  out.typingEnabled = raw.typingEnabled !== false;
   out.todos = normalizeTodos(raw.todos);
   out.chatRules = normalizeChatRules(raw.chatRules);
   out.chatEngine = normalizeChatEnginePref(raw.chatEngine);

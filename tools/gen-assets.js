@@ -1,20 +1,21 @@
 'use strict';
 /**
- * 内置占位素材生成器：火柴人（线条 + 一张脸）。
+ * 内置素材的**占位图**生成器：火柴人（线条 + 一张脸）。
  *
- * 覆盖全部内置素材，一套线条骨架出十二张图：
- *   src/assets/pet.png    主图   = 站姿 + 睁眼
- *   src/assets/blink.png  眨眼图 = 站姿 + 闭眼（与主图只差眼睛，身体逐像素相同）
- *   src/assets/state.png  状态图 = 双手举起
- *   src/assets/type1.png  打字态图1 = 双手搭在"键盘"上（略低头）
- *   src/assets/type2.png  打字态图2 = 右手抬起（每按一下键盘与图1 交替一次）
- *   src/assets/type-idle.png 打字态图3 = 双手身前交叠（停手 1 秒后显示）
- *   动画素材/动画1/*      特效   = 单手挥手三帧
- *   动画素材/动画2/*      特效   = 原地起跳三帧（蓄力 → 伸直 → 落地）
+ * ⚠ src/assets/ 里现在放的是**正式手绘素材**（2048 见方画布），本脚本只在文件缺失时补一张
+ *   320 见方的火柴人占位，且**绝不覆盖已存在的图**（幂等，见 main() 里的 existsSync 分支）。
+ *   出图清单共 7 张，路径全部取自 config（生成器 / assets.test.js 守卫 / 应用加载三方同源）：
+ *     src/assets/pet.png      主图 = 站姿 + 睁眼
+ *     src/assets/anim1.png    自动动画①（单帧）
+ *     src/assets/anim2.png    自动动画②（单帧）
+ *     src/assets/anim3-1.png / anim3-2.png  自动动画③（两帧）
+ *     src/assets/type1.png    打字帧1 = 双手搭在"键盘"横线上（略低头）
+ *     src/assets/type2.png    打字帧2 = 右手抬起（每按一下键盘与图1 交替一次）
+ *   占位姿势只是"能动就行"，与手绘美术不是同一套；真图缺失才会生成，别指望它出美术效果。
  *
- * 一致性红线（脚本末尾自检，test/unit/assets.test.js 常驻守卫）：
- *  - 全部素材同一 320×320 画布、同一脚底基线、同一中轴 → 换形态/插眨眼帧不跳位；
- *    所以姿势一律左右镜像（挥手帧举起的右手也不越过站姿手部的横向范围）；
+ * 一致性红线（脚本末尾自检 + test/unit/assets.test.js 常驻守卫）：
+ *  - 同一画布、同一脚底基线、同一中轴 → 换图/插帧不跳位；所以姿势一律左右对称，
+ *    挥手帧举起的右手也不越过站姿手部的横向范围（否则包围盒中轴随手掌摆）；
  *  - 只写 IHDR/IDAT/IEND，无色彩档案块（否则与无档案素材出现肉眼色差）；
  *  - 线条实心段 alpha=255，远高于 CFG.image.alphaThreshold（透明处点击穿透）。
  *
@@ -27,7 +28,9 @@ const { analyzeBitmap } = require('../src/shared/geom');
 const { CFG } = require('../src/shared/config');
 
 const ROOT = path.join(__dirname, '..');
-const SIZE = 320;      // 画布边长（显示上限 CFG.image.petMaxDim=220，320 留足高清余量且够切 exe 图标 256）
+const SIZE = 320;      // 占位图画布边长。⚠ 小于显示上限 CFG.image.petMaxDim(386) → 占位图按"小图不放大"
+                       // 原样显示（人物偏小），且 assets.test.js 里"主图大于显示上限"那条对占位图不成立；
+                       // 正式手绘是 2048，两者别混用。骨架坐标全部按 320 写死，要改大小得整体缩放。
 const SS = 4;          // 超采样倍数（细线条靠它抗锯齿）
 const CX = 160;        // 中轴
 const INK = [52, 58, 68];
@@ -80,13 +83,12 @@ const POSES = {
     { ...IDLE, armR: [[CX, 112], [206, 98], [188, 66]] },
     { ...IDLE, armR: [[CX, 112], [204, 96], [210, 72]] },
   ],
-  // 打字态三张图（形态三）：图1 双手搭在"键盘"横线上、图2 右手抬起（每按一下键盘两者交替）、
-  // 图3 双手身前交叠（停手 idleMs 后显示）。三张都刻意保持左右横向对称：包围盒中轴一偏，
-  // 换帧瞬间人物会横移；腿一律沿用 IDLE，脚底基线才逐张相同（换图原地不动）。kb:true = 画键盘横线。
+  // 打字两帧：图1 双手搭在"键盘"横线上、图2 右手抬起（每按一下键盘两者交替），停手回主图。
+  // 两张都刻意保持左右横向对称：包围盒中轴一偏，换帧瞬间人物会横移；腿一律沿用 IDLE，
+  // 脚底基线才逐张相同（换图原地不动）。kb:true = 画键盘横线。
   type1: { ...IDLE, head: [CX, 68], neck: [CX, 96], armL: [[CX, 112], [130, 150], [142, 168]], kb: true },
   type2: { ...IDLE, head: [CX, 68], neck: [CX, 96], armL: [[CX, 112], [130, 150], [142, 168]],
     armR: [[CX, 112], [190, 150], [178, 136]], kb: true },
-  typeIdle: { ...IDLE, armL: [[CX, 112], [134, 152], [150, 174]] },
   // 起跳三帧：脚底基线不动，靠屈膝/伸直/低头表达蓄力-上冲-落地
   jump: [
     { ...IDLE, head: [CX, 74], neck: [CX, 104], hip: [CX, 206],
@@ -147,34 +149,35 @@ function render(body, face) {
 
 /* ================= 出图清单 ================= */
 
+/* 出图清单（2026-10-02 单形态改版后）：
+ *  src/assets/ 里现在是**正式手绘素材**，本脚本只在文件缺失时补一张火柴人占位，
+ *  绝不覆盖已存在的图（见 main() 里的 existsSync 分支）—— 之前是无条件 writeFileSync，
+ *  谁跑一次 `npm run assets:gen` 就会把正式美术洗成占位图。
+ *  路径全部取自 config（生成器 / assets.test.js 守卫 / 应用加载三方同源）。 */
 const SHOTS = [
   { name: '主图', file: path.join('src', 'assets', 'pet.png'), pose: POSES.idle, face: FACE.open },
-  { name: '眨眼图', file: path.join('src', 'assets', 'blink.png'), pose: POSES.idle, face: FACE.closed },
-  { name: '状态图', file: path.join('src', 'assets', 'state.png'), pose: POSES.armsUp, face: FACE.open },
 ];
-// 形态三的三张图：路径直接取 config.typing（生成器 / assets.test.js 守卫 / 应用加载三方同源，
-// 不会各说各话）；"../" 相对 src/renderer，所以落到 src/assets/ 下。
-{
-  const poses = [POSES.type1, POSES.type2, POSES.typeIdle];
-  const files = (CFG.typing.frames || []).concat([CFG.typing.idleFrame]);
-  if (files.length !== poses.length) {
-    throw new Error(`config.typing 需要"2 张打字帧 + 1 张不打字图"，实际 ${files.length} 项`);
-  }
-  files.forEach((fp, i) => SHOTS.push({
-    name: i < 2 ? `打字态图${i + 1}` : '打字态·不打字图',
-    file: path.join(ROOT, 'src', 'renderer', fp), pose: poses[i], face: FACE.open,
-  }));
-}
-// 特效帧路径直接取 config.effectAnim.groups（"../" 相对 src/renderer）→ 生成器不会和应用加载路径走偏
-CFG.effectAnim.groups.forEach((g, gi) => {
-  const poses = [POSES.wave, POSES.jump][gi];
-  if (!poses || poses.length !== g.frames.length) {
-    throw new Error(`姿势组与 config.effectAnim.groups[${gi}] 帧数不一致（${poses ? poses.length : 0} ≠ ${g.frames.length}）`);
-  }
+// 自动动画的三种（帧数 1/1/2）：路径取 config.autoAnim.groups
+CFG.autoAnim.groups.forEach((g, gi) => {
   g.frames.forEach((fp, fi) => {
-    SHOTS.push({ name: `${g.name} 第${fi + 1}帧`, file: path.join(ROOT, 'src', 'renderer', fp), pose: poses[fi], face: FACE.open });
+    const pose = [POSES.idle, POSES.armsUp, POSES.wave, POSES.jump][(gi * 2 + fi) % 4];
+    SHOTS.push({
+      name: `${g.name} 第${fi + 1}帧`,
+      file: path.join(ROOT, 'src', 'renderer', fp), pose, face: fi % 2 ? FACE.closed : FACE.open,
+    });
   });
 });
+// 打字两帧：路径取 config.typing.frames（第三张"不打字"图已删除，停手回主图）
+{
+  const poses = [POSES.type1, POSES.type2];
+  const files = CFG.typing.frames || [];
+  if (files.length !== poses.length) {
+    throw new Error(`config.typing 需要恰好 2 张打字帧，实际 ${files.length} 项`);
+  }
+  files.forEach((fp, i) => SHOTS.push({
+    name: `打字帧${i + 1}`, file: path.join(ROOT, 'src', 'renderer', fp), pose: poses[i], face: FACE.open,
+  }));
+}
 
 function chunksOf(buf) {
   const out = [];
@@ -191,9 +194,13 @@ function chunksOf(buf) {
 function main() {
   const t0 = Date.now();
   const rows = [];
+  const made = [];
+  const skipped = [];
   let ref = null;
   for (const s of SHOTS) {
     const abs = path.isAbsolute(s.file) ? s.file : path.join(ROOT, s.file);
+    // 已存在的图一律不动：src/assets/ 里是正式手绘素材，覆盖一次就没了
+    if (fs.existsSync(abs)) { skipped.push(s.name); continue; }
     const buf = encodePng(render(figure(s.pose), s.face));
     fs.mkdirSync(path.dirname(abs), { recursive: true });
     fs.writeFileSync(abs, buf);
@@ -204,18 +211,21 @@ function main() {
     if (bad.length) throw new Error(`${s.name} 含色彩档案块：${bad.join(',')}`);
     const feet = an.bbox.y1, cx = (an.bbox.x0 + an.bbox.x1) / 2;
     if (!ref) ref = { name: s.name, feet, cx };
+    made.push(s.name);
     rows.push({ name: s.name, file: path.relative(ROOT, abs).split(path.sep).join('/'),
       dim: `${back.width}×${back.height}`, kb: (buf.length / 1024).toFixed(1),
       bbox: `${an.bbox.x0},${an.bbox.y0}→${an.bbox.x1},${an.bbox.y1}`, feet, cx: cx.toFixed(1) });
   }
-  console.table(rows);
-  // 换形态/插帧都按"包围盒底边中点"对齐 → 脚底必须逐张一致；中轴允许 2px（单手挥手的固有偏差，
-  // 换算到 220px 显示不足 1.4px，肉眼看不出来）
-  const off = rows.filter((r) => r.feet !== ref.feet || Math.abs(r.cx - ref.cx) > 2);
-  const total = rows.reduce((s, r) => s + Number(r.kb), 0);
-  console.log(`基准：脚底 y=${ref.feet}、中轴 x=${ref.cx.toFixed(1)}（${ref.name}）；偏离对齐的素材：${off.length ? off.map((d) => d.name).join(', ') : '无'}`);
-  console.log(`共 ${rows.length} 张，合计 ${total.toFixed(1)} KB，用时 ${((Date.now() - t0) / 1000).toFixed(1)}s`);
-  if (off.length) process.exitCode = 1;
+  if (rows.length) {
+    console.table(rows);
+    const off = rows.filter((r) => r.feet !== ref.feet || Math.abs(r.cx - ref.cx) > 2);
+    console.log(`新生成 ${made.length} 张；基准：脚底 y=${ref.feet}、中轴 x=${ref.cx.toFixed(1)}（${ref.name}）；偏离对齐的：${off.length ? off.map((d) => d.name).join(', ') : '无'}`);
+    if (off.length) process.exitCode = 1;
+  }
+  // 跨素材的一致性（同画布 / 脚底 / 中轴 / 无色彩块）由 test/unit/assets.test.js 常驻守卫，
+  // 这里不重复判 —— 占位图与手绘图混在一条基准里比反而会误报。
+  console.log(`新生成 ${made.length} 张，跳过已存在 ${skipped.length} 张（共 ${SHOTS.length}），用时 ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+  if (skipped.length) console.log(`  已存在、未覆盖：${skipped.join(', ')}`);
 }
 
 main();

@@ -3,7 +3,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
   createDefaultStatus, registerInteraction, feed, rapidInteract, settleStatus, freezeStatus,
-  rollAffinity, crossedMilestone, deriveStatus, VISUAL_MODES, normalizeVisualMode, nextVisualMode,
+  rollAffinity, crossedMilestone, deriveStatus,
 } = require('../../src/shared/status');
 
 const T0 = 1_700_000_000_000;
@@ -127,14 +127,11 @@ test('deriveStatus：取整 + 归零判半透明 + 不叠加恢复', () => {
   assert.equal(fine.low, false); assert.equal(fine.opacity, 1);
 });
 
-test('视觉形态枚举：三态轮换，非法值归位主形态', () => {
-  assert.deepEqual(VISUAL_MODES, ['main', 'state', 'type']);
-  assert.equal(nextVisualMode('main'), 'state');
-  assert.equal(nextVisualMode('state'), 'type');
-  assert.equal(nextVisualMode('type'), 'main'); // 打字态之后回主图（三态闭环）
-  assert.equal(normalizeVisualMode('nonsense'), 'main');
-  assert.equal(normalizeVisualMode(undefined), 'main');
-  assert.equal(normalizeVisualMode('type'), 'type');
+test('视觉形态枚举已随"只有一种形态"改版删除（不许复活）', () => {
+  const s = require('../../src/shared/status');
+  assert.equal(s.VISUAL_MODES, undefined, '三态枚举仍在 —— 现在只有一种形态，靠打字信号自动换图');
+  assert.equal(s.normalizeVisualMode, undefined, 'normalizeVisualMode 仍在');
+  assert.equal(s.nextVisualMode, undefined, 'nextVisualMode 仍在');
 });
 
 /* ================= 冻结：桌宠"不在你面前"时不许挨饿（2026-09-16 用户需求） ================= */

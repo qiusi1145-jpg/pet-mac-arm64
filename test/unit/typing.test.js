@@ -128,13 +128,14 @@ test('typingCfg：非法值夹到安全区间，缺失回默认', () => {
   assert.deepEqual(typingCfg(null), { idleMs: 1000, minFlipMs: 50 });
 });
 
-test('默认 config 的 typing 素材路径与帧数满足形态三（两帧 + 一张不打字图）', () => {
+test('默认 config 的 typing 素材满足"两帧交替 + 停手回主图"（2026-10-02 改版）', () => {
   const { CFG: appCfg } = require('../../src/shared/config');
   const t = appCfg.typing;
   assert.equal(t.frames.length, 2, '打字态固定两张图随按键交替');
   assert.ok(t.frames.every((p) => typeof p === 'string' && p.startsWith('../')), '内置帧走渲染层相对路径规则');
-  assert.ok(typeof t.idleFrame === 'string' && t.idleFrame.startsWith('../'));
-  assert.equal(t.idleMs, 1000, '用户定稿：停手 1 秒回第三张图');
+  // 第三张"不打字"图已删除：停手后显示的是主图，不再是独立素材
+  assert.equal(t.idleFrame, undefined, 'idleFrame 仍在 —— 单形态改版后它没有存在的意义');
+  assert.equal(t.idleMs, 1000, '用户定稿：停手 1 秒回主图');
 });
 
 /* ================= 探针源码生成（主进程侧，src/main/typing.js） =================
@@ -185,7 +186,7 @@ test('无实现的平台：available() false 且 start() 失败但不抛（菜�
 });
 
 // darwin 的可用性 = 预编译 helper 在不在。构建期没编出来时必须置灰并给出可执行的提示，
-// 而不是静默失败，也不是去弹一个"能选但没反应"的形态三。
+// 而不是静默失败，也不是给一个"能打开却没反应"的开关。
 test('darwin：helper 缺席 → available() false，start() 报 helper-missing 且指明怎么修', () => {
   const desc = Object.getOwnPropertyDescriptor(process, 'platform');
   const realExists = require('fs').existsSync;

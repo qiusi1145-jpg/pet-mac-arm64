@@ -33,7 +33,7 @@ class ChatOrchestrator {
       chatRules: st.chatRules || [],
       todos: (st.todos || []).map((t) => ({ text: t.text, due: t.due, done: !!t.done, important: !!t.important })),
       study: st.english || null,
-      form: this.app.visualMode,
+      // form（旧"视觉形态"字段）已随形态系统一起删除：只有一种形态，聊天引擎本来也没读它。
       ...(extra && typeof extra === 'object' ? extra : {}),
     };
   }
