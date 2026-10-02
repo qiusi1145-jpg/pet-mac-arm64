@@ -73,8 +73,14 @@ int main(int argc, const char **argv) {
   fputc('\n', stdout);
   fflush(stdout);
 
+  // 挂载点必须是**会话层**（kCGSessionEventTap），不能是 HID 层（kCGHIDEventTap）：
+  //   物理键盘事件 HID→会话全程流经，两层都看得见；
+  //   但远控/合成输入（ToDesk/向日葵/VNC/osascript 的 CGEventPost 系注入）**从会话层进入**，
+  //   HID 层的 tap 结构上永远看不到 —— 2026-10-03 在 M2 云机实测：探针健康+已信任，
+  //   ToDesk 真敲 22 秒 = 0 节拍，osascript 合成 10 键（注入成功）= 0 节拍，Secure Input 未开。
+  //   Windows 侧 WH_KEYBOARD_LL 默认能看到 SendInput 注入的键，两层对齐后行为一致。
   CFMachPortRef tap = CGEventTapCreate(
-    kCGHIDEventTap, kCGHeadInsertEventTap, kCGEventTapOptionListenOnly,
+    kCGSessionEventTap, kCGHeadInsertEventTap, kCGEventTapOptionListenOnly,
     CGEventMaskBit(kCGEventKeyDown), tapCb, NULL);
   if (!tap) return 4;   // 建不起来（通常是无辅助功能权限）
 
